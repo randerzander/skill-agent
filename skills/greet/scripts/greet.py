@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 """
 Greet skill script
-Provides a friendly greeting to the user
+Provides a friendly greeting to the user with current date and time
 """
 import json
 import sys
+from datetime import datetime
 
 def greet(name=None):
-    """Generate a greeting message"""
+    """Generate a greeting message with current date and time"""
+    # Get current date and time
+    now = datetime.now()
+    current_time = now.strftime("%A, %B %d, %Y at %I:%M %p")
+    
     if name:
-        return f"Hello, {name}! It's wonderful to meet you. How can I help you today?"
+        return f"Hello, {name}! It's wonderful to meet you. Today is {current_time}. How can I help you today?"
     else:
-        return "Hello! It's great to meet you. How can I help you today?"
+        return f"Hello! It's great to meet you. Today is {current_time}. How can I help you today?"
 
 if __name__ == "__main__":
     # Read parameters from stdin if provided

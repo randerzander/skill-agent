@@ -1,6 +1,6 @@
 # Agent Skills Framework
 
-A framework that implements the [Agent Skills specification](https://agentskills.io) for enabling AI agents to discover, select, and execute skills based on user requests. Uses OpenAI's client library with OpenRouter to access the Nemotron Nano 70B free model.
+A framework that implements the [Agent Skills specification](https://agentskills.io) for enabling AI agents to discover, select, and execute skills based on user requests. Uses OpenAI's client library with OpenRouter to access the Nemotron Nano 30B free model.
 
 ## What are Agent Skills?
 
@@ -171,7 +171,7 @@ Main agent loop orchestrating the workflow:
 
 Interfaces with the LLM:
 - Configured to use OpenRouter as the base URL
-- Uses the Nemotron Nano 70B free model
+- Uses the Nemotron Nano 30B free model
 
 ## Configuration
 

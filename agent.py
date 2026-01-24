@@ -180,7 +180,7 @@ class AgentSkillsFramework:
         )
         
         # Model configuration
-        self.model = "nvidia/llama-3.1-nemotron-70b-instruct:free"
+        self.model = "nvidia/nemotron-3-nano-30b-a3b:free"
         
         # Initialize skill loader
         self.skill_loader = SkillLoader()

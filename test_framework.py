@@ -19,9 +19,37 @@ def test_skill_loader():
     metadata = loader.get_skills_metadata()
     assert len(metadata) == 1, "Expected 1 skill"
     assert metadata[0]['name'] == 'greet', "Expected greet skill"
+    assert 'description' in metadata[0], "Expected description in metadata"
     print("✓ Skill metadata correct")
     
+    # Check XML generation
+    xml = loader.get_skills_xml()
+    assert '<available_skills>' in xml, "Expected XML format"
+    assert '<name>greet</name>' in xml, "Expected greet skill in XML"
+    print("✓ Skills XML format correct")
+    
     return loader
+
+def test_skill_activation(loader):
+    """Test skill activation (progressive disclosure)"""
+    print("\nTesting skill activation...")
+    
+    # Initially, content should not be loaded
+    skill = loader.skills['greet']
+    assert not skill['content_loaded'], "Content should not be loaded initially"
+    print("✓ Progressive disclosure: content not loaded at startup")
+    
+    # Activate skill
+    content = loader.activate_skill('greet')
+    assert content is not None, "Failed to activate skill"
+    assert '---' in content, "Expected YAML frontmatter"
+    assert 'name: greet' in content, "Expected name in frontmatter"
+    assert '# Greet Skill' in content, "Expected markdown content"
+    print("✓ Skill activated and full content loaded")
+    
+    # Check that content is now marked as loaded
+    assert skill['content_loaded'], "Content should be marked as loaded"
+    print("✓ Progressive disclosure: content loaded on activation")
 
 def test_skill_execution(loader):
     """Test skill execution"""
@@ -99,6 +127,7 @@ def main():
     
     try:
         loader = test_skill_loader()
+        test_skill_activation(loader)
         test_skill_execution(loader)
         test_parse_skill_selection()
         
@@ -111,6 +140,8 @@ def main():
         return 1
     except Exception as e:
         print(f"\n✗ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
         return 1
     
     return 0

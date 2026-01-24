@@ -4,6 +4,7 @@ Agent Skills Framework
 A framework for AI agents to discover and execute skills based on user requests.
 """
 import os
+import sys
 import json
 import subprocess
 from pathlib import Path
@@ -68,7 +69,7 @@ class SkillLoader:
             # Execute the skill script with parameters
             params_json = json.dumps(parameters or {})
             result = subprocess.run(
-                ['python3', str(script_path), params_json],
+                [sys.executable, str(script_path), params_json],
                 capture_output=True,
                 text=True,
                 timeout=30

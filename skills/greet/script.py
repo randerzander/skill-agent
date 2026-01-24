@@ -19,7 +19,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         try:
             params = json.loads(sys.argv[1])
-        except:
+        except json.JSONDecodeError:
             pass
     
     # Execute the greeting

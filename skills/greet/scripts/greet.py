@@ -3,33 +3,27 @@
 Greet skill script
 Provides a friendly greeting to the user with current date and time
 """
-import json
-import sys
 from datetime import datetime
 
-def greet(name=None):
-    """Generate a greeting message with current date and time"""
+def execute(params):
+    """
+    Execute the greet skill
+    
+    Args:
+        params: Dictionary of parameters (e.g., {"name": "Alice"})
+    
+    Returns:
+        Dictionary with result
+    """
+    name = params.get("name")
+    
     # Get current date and time
     now = datetime.now()
     current_time = now.strftime("%A, %B %d, %Y at %I:%M %p")
     
     if name:
-        return f"Hello, {name}! It's wonderful to meet you. Today is {current_time}. How can I help you today?"
+        greeting = f"Hello, {name}! It's wonderful to meet you. Today is {current_time}. How can I help you today?"
     else:
-        return f"Hello! It's great to meet you. Today is {current_time}. How can I help you today?"
-
-if __name__ == "__main__":
-    # Read parameters from stdin if provided
-    params = {}
-    if len(sys.argv) > 1:
-        try:
-            params = json.loads(sys.argv[1])
-        except json.JSONDecodeError:
-            pass
+        greeting = f"Hello! It's great to meet you. Today is {current_time}. How can I help you today?"
     
-    # Execute the greeting
-    name = params.get("name")
-    result = greet(name)
-    
-    # Output the result as JSON
-    print(json.dumps({"result": result}))
+    return {"result": greeting}

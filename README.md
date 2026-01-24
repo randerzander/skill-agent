@@ -127,27 +127,35 @@ To create a new skill:
    - YAML frontmatter (name and description)
    - Markdown instructions
 3. Optionally add a `scripts/` directory with executable code
-4. Scripts should accept JSON parameters via `sys.argv[1]` and output JSON to stdout
+4. Scripts should have an `execute(params)` function that accepts a dictionary and returns a dictionary
 
 Example script structure:
 
 ```python
 #!/usr/bin/env python3
-import json
-import sys
+"""
+My skill script
+"""
 
-def my_skill_function(param1=None):
-    # Your skill logic here
-    return "result"
-
-if __name__ == "__main__":
-    params = {}
-    if len(sys.argv) > 1:
-        params = json.loads(sys.argv[1])
+def execute(params):
+    """
+    Execute the skill
     
-    result = my_skill_function(params.get("param1"))
-    print(json.dumps({"result": result}))
+    Args:
+        params: Dictionary of parameters (e.g., {"param1": "value"})
+    
+    Returns:
+        Dictionary with result (e.g., {"result": "output"})
+    """
+    param1 = params.get("param1")
+    
+    # Your skill logic here
+    result = f"Processed: {param1}"
+    
+    return {"result": result}
 ```
+
+Scripts are imported and executed directly as Python modules, allowing them to use any dependencies installed in the project's `requirements.txt`.
 
 ## Architecture
 
@@ -161,7 +169,8 @@ Manages skill discovery and execution following the Agent Skills specification:
 - Provides skill metadata in XML format for Claude-compatible prompts
 - Discovers scripts in skill directories
 - Converts scripts to OpenAI tool definitions
-- Executes skill scripts with JSON parameters
+- Imports and executes skill scripts directly as Python modules
+- Provides detailed error handling and logging
 
 ### 2. AgentSkillsFramework
 

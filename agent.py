@@ -7,8 +7,9 @@ Implements the Agent Skills specification from agentskills.io
 import os
 import sys
 import json
-import subprocess
 import re
+import importlib.util
+import traceback
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from openai import OpenAI
@@ -188,28 +189,28 @@ class SkillLoader:
             return {"error": f"Script '{script_name}' not found for skill '{skill_name}'"}
         
         try:
-            # Execute the skill script with parameters
-            params_json = json.dumps(parameters or {})
-            result = subprocess.run(
-                [sys.executable, str(script_path), params_json],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+            # Import the script module dynamically
+            spec = importlib.util.spec_from_file_location(f"{skill_name}.{script_name}", script_path)
+            if spec is None or spec.loader is None:
+                return {"error": f"Failed to load script '{script_name}'"}
             
-            if result.returncode != 0:
-                return {"error": f"Script execution failed: {result.stderr}"}
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
             
-            # Parse the output
-            try:
-                return json.loads(result.stdout)
-            except json.JSONDecodeError:
-                return {"result": result.stdout.strip()}
+            # Look for an execute function in the module
+            if hasattr(module, 'execute'):
+                # Call the execute function with parameters
+                result = module.execute(parameters or {})
+                # Ensure result is a dict
+                if not isinstance(result, dict):
+                    return {"result": result}
+                return result
+            else:
+                return {"error": f"Script '{script_name}' does not have an 'execute' function"}
         
-        except subprocess.TimeoutExpired:
-            return {"error": "Script execution timed out"}
         except Exception as e:
-            return {"error": f"Execution error: {str(e)}"}
+            error_details = traceback.format_exc()
+            return {"error": f"Script execution failed: {str(e)}", "traceback": error_details}
 
 
 class AgentSkillsFramework:

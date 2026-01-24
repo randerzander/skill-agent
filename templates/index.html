@@ -678,6 +678,19 @@
                         historyDiv.innerHTML = data.messages.map(msg => {
                             let content = msg.content || '(no content)';
                             let toolCallsHtml = '';
+                            let thinkingHtml = '';
+                            
+                            // Add thinking traces if available (for reasoning models)
+                            if (msg.thinking) {
+                                thinkingHtml = `
+                                    <div class="message-tool-calls" style="background: rgba(255, 193, 7, 0.1);">
+                                        <strong>💭 Thinking/Reasoning:</strong>
+                                        <div class="message-content" style="margin-top: 5px; font-style: italic;">
+                                            ${escapeHtml(msg.thinking)}
+                                        </div>
+                                    </div>
+                                `;
+                            }
                             
                             if (msg.tool_calls) {
                                 toolCallsHtml = `
@@ -695,6 +708,7 @@
                             return `
                                 <div class="chat-message ${msg.role}">
                                     <div class="message-role">${msg.role}</div>
+                                    ${thinkingHtml}
                                     <div class="message-content">${escapeHtml(content)}</div>
                                     ${toolCallsHtml}
                                 </div>

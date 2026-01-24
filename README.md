@@ -37,7 +37,30 @@ cp .env.example .env
 
 ## Usage
 
-Run the agent framework:
+### Web Frontend (Recommended)
+
+Run the web-based interface with HTMX:
+```bash
+python app.py
+```
+
+Then open your browser to `http://localhost:5000`
+
+The web frontend provides:
+- 🎨 **Beautiful UI**: Modern, responsive interface with real-time updates
+- ⏱️ **Spinner Logging**: See execution progress with incrementing timing
+- 🎯 **Skills Display**: View all loaded skills and their descriptions
+- 🛠️ **Tools Tracking**: Monitor tools being called with their arguments
+- 💭 **Chat History Overlay**: Toggle overlay to view full LLM conversation history including:
+  - System messages
+  - User messages
+  - Assistant responses
+  - Tool calls and results
+  - Thinking traces (for reasoning models)
+
+### Command Line Interface
+
+Run the agent framework in CLI mode:
 ```bash
 python agent.py
 ```
@@ -189,10 +212,25 @@ Interfaces with the LLM:
 - Uses the Nemotron Nano 30B free model
 - Supports OpenAI tools/function calling format
 
+### 4. Web Frontend (app.py)
+
+Flask-based web interface with HTMX for real-time updates:
+- **Server-Sent Events (SSE)**: Streams execution progress in real-time
+- **WebAgentWrapper**: Wraps the agent framework to capture all execution events
+- **Event Tracking**: Monitors LLM calls, skill activations, tool executions
+- **State Management**: Thread-safe state management for concurrent requests
+- **Interactive UI**: Modern interface with:
+  - Real-time execution log with spinner animations and elapsed time
+  - Skills panel showing all available skills
+  - Tools tracking panel displaying called tools with arguments
+  - Toggleable chat history overlay with full conversation including thinking traces
+
 ## Configuration
 
 Environment variables (set in `.env`):
 - `OPENROUTER_API_KEY`: Your OpenRouter API key (required)
+- `PORT`: Port for web frontend (default: 5000)
+- `SECRET_KEY`: Flask secret key (default: auto-generated for dev)
 
 ## Testing
 

@@ -107,9 +107,17 @@ class WebAgentWrapper:
                 
                 message = response.choices[0].message
                 
+                # Extract thinking/reasoning if available (for models that support it)
+                thinking = None
+                if hasattr(message, 'reasoning_content'):
+                    thinking = message.reasoning_content
+                elif hasattr(message, 'thinking'):
+                    thinking = message.thinking
+                
                 # Add LLM response event
                 self.add_event('llm_response', {
                     'content': message.content,
+                    'thinking': thinking,
                     'tool_calls': [
                         {
                             'id': tc.id,
@@ -294,6 +302,7 @@ def run_agent():
                         agent_state['chat_history'].append({
                             'role': 'assistant',
                             'content': event['data']['content'],
+                            'thinking': event['data'].get('thinking'),
                             'tool_calls': event['data'].get('tool_calls', []),
                             'timestamp': event['timestamp']
                         })

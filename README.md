@@ -55,15 +55,17 @@ Agent: [Uses the greet skill with name parameter] Hello, John! It's wonderful to
 
 ## How It Works
 
-The framework implements **progressive disclosure** to manage context efficiently:
+The framework implements **progressive disclosure** and **OpenAI tools format** to manage context efficiently:
 
 1. **Discovery**: At startup, agents load only the name and description of each available skill
-2. **Selection**: The LLM analyzes user input and selects an appropriate skill
-3. **Activation**: When a skill is selected, the full `SKILL.md` content is loaded into context
-4. **Execution**: The agent follows the instructions, optionally executing bundled scripts
-5. **Response**: Results are passed back to the LLM for natural language response generation
+2. **Skill Mention**: The LLM mentions a relevant skill in its response
+3. **Activation**: When a skill is mentioned, the full `SKILL.md` content is loaded into context
+4. **Tool Generation**: Skill scripts are automatically converted to OpenAI tool definitions
+5. **Tool Calling**: The LLM calls tools using OpenAI's function calling format
+6. **Execution**: The framework executes the script and returns results
+7. **Response**: Results are passed back to the LLM for natural language response generation
 
-This approach keeps agents fast while giving them access to more context on demand.
+This approach keeps agents fast while giving them access to more context on demand, and uses the standard OpenAI tools API for script execution.
 
 ## Skill Structure
 
@@ -157,21 +159,26 @@ Manages skill discovery and execution following the Agent Skills specification:
 - Parses `SKILL.md` files to extract frontmatter and content
 - Implements progressive disclosure (loads metadata at startup, full content on demand)
 - Provides skill metadata in XML format for Claude-compatible prompts
+- Discovers scripts in skill directories
+- Converts scripts to OpenAI tool definitions
 - Executes skill scripts with JSON parameters
 
 ### 2. AgentSkillsFramework
 
 Main agent loop orchestrating the workflow:
 - Manages conversation with the LLM
-- Uses XML format for skill metadata injection
-- Activates skills by loading full SKILL.md content
-- Handles the flow between user input and responses
+- Uses XML format for skill metadata injection  
+- Activates skills when mentioned by the LLM
+- Generates OpenAI tools from activated skill scripts
+- Handles tool calling and execution
+- Manages the flow between user input and responses
 
 ### 3. OpenAI Client
 
 Interfaces with the LLM:
 - Configured to use OpenRouter as the base URL
 - Uses the Nemotron Nano 30B free model
+- Supports OpenAI tools/function calling format
 
 ## Configuration
 

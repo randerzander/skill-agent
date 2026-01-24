@@ -3,14 +3,15 @@
 Example usage of the Agent Skills Framework
 Demonstrates how the framework works without requiring an API key
 Follows the Agent Skills specification from agentskills.io
+Uses OpenAI tools format for script execution
 """
 import json
 from agent import SkillLoader
 
 def simulate_agent_workflow():
-    """Simulate the agent's decision-making and skill execution workflow"""
+    """Simulate the agent's decision-making and skill execution workflow with tools"""
     print("=" * 70)
-    print("Agent Skills Framework - Example Simulation")
+    print("Agent Skills Framework - Example Simulation (Tools-Based)")
     print("Following the Agent Skills specification from agentskills.io")
     print("=" * 70)
     
@@ -31,36 +32,46 @@ def simulate_agent_workflow():
     user_input = "Please greet me, my name is Alice"
     print(f'User: "{user_input}"')
     
-    # Step 3: Simulate LLM skill selection
+    # Step 3: LLM mentions skill in response
     print("\n" + "=" * 70)
-    print("[Step 3] LLM analyzes user input and selects appropriate skill")
-    print("LLM thinking: The user wants a greeting with their name...")
-    selected_skill = {
-        "name": "greet",
-        "parameters": {"name": "Alice"}
-    }
-    print(f"LLM decision: SKILL:greet:{json.dumps(selected_skill['parameters'])}")
+    print("[Step 3] LLM identifies relevant skill")
+    print("LLM response: 'I'll use the greet skill to welcome you properly.'")
     
     # Step 4: Activate skill (load full SKILL.md content)
     print("\n" + "=" * 70)
     print("[Step 4] Activating skill (progressive disclosure)")
     print("Loading full SKILL.md content into context...")
-    skill_content = loader.activate_skill(selected_skill['name'])
+    skill_content = loader.activate_skill('greet')
     print(f"Full SKILL.md content loaded ({len(skill_content)} characters)")
     print(f"\nFirst 300 characters of SKILL.md:\n{skill_content[:300]}...")
     
-    # Step 5: Execute the skill
+    # Step 5: Generate tools from skill scripts
     print("\n" + "=" * 70)
-    print("[Step 5] Executing skill script...")
-    result = loader.execute_skill(
-        selected_skill['name'],
-        selected_skill['parameters']
-    )
-    print(f"Execution result: {json.dumps(result, indent=2)}")
+    print("[Step 5] Offering skill scripts as OpenAI tools")
+    tools = loader.get_skill_tools('greet')
+    print(f"Generated {len(tools)} tool(s) from skill scripts:")
+    for tool in tools:
+        print(f"  - Tool: {tool['function']['name']}")
+        print(f"    Description: {tool['function']['description']}")
     
-    # Step 6: LLM generates final response
+    # Step 6: LLM calls the tool
     print("\n" + "=" * 70)
-    print("[Step 6] LLM generates natural response based on result")
+    print("[Step 6] LLM calls tool with parameters")
+    tool_call = {
+        "function": "greet_greet",
+        "arguments": {"params": {"name": "Alice"}}
+    }
+    print(f"Tool call: {json.dumps(tool_call, indent=2)}")
+    
+    # Step 7: Execute the tool
+    print("\n" + "=" * 70)
+    print("[Step 7] Executing tool (running script)...")
+    result = loader.execute_skill_script('greet', 'greet', {'name': 'Alice'})
+    print(f"Tool execution result: {json.dumps(result, indent=2)}")
+    
+    # Step 8: LLM generates final response
+    print("\n" + "=" * 70)
+    print("[Step 8] LLM generates natural response using tool result")
     final_response = result['result']
     print(f'Agent: "{final_response}"')
     
@@ -120,8 +131,8 @@ def demonstrate_different_scenarios():
     for i, scenario in enumerate(scenarios, 1):
         print(f"\nScenario {i}: {scenario['description']}")
         print(f"Parameters: {json.dumps(scenario['params'])}")
-        result = loader.execute_skill(scenario['skill'], scenario['params'])
-        print(f"Result: {result['result']}")
+        result = loader.execute_skill_script('greet', 'greet', scenario['params'])
+        print(f"Result: {result['result'][:80]}...")
 
 if __name__ == "__main__":
     simulate_agent_workflow()
@@ -134,4 +145,5 @@ if __name__ == "__main__":
     print("  2. Run: python agent.py")
     print("\nLearn more about Agent Skills:")
     print("  https://agentskills.io")
+    print("\nNOTE: This implementation uses OpenAI tools format for script execution")
     print("=" * 70)

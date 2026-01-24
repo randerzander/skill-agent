@@ -119,26 +119,72 @@ class SkillLoader:
         
         return skill['full_content']
     
-    def execute_skill(self, skill_name: str, parameters: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Execute a skill with given parameters"""
+    def get_skill_scripts(self, skill_name: str) -> List[Dict[str, Any]]:
+        """Get list of available scripts for a skill"""
+        if skill_name not in self.skills:
+            return []
+        
+        skill = self.skills[skill_name]
+        skill_path = Path(skill['path'])
+        scripts_dir = skill_path / "scripts"
+        
+        if not scripts_dir.exists():
+            return []
+        
+        scripts = []
+        for script_file in scripts_dir.glob("*.py"):
+            script_name = script_file.stem
+            scripts.append({
+                "name": script_name,
+                "path": str(script_file)
+            })
+        
+        return scripts
+    
+    def get_skill_tools(self, skill_name: str) -> List[Dict[str, Any]]:
+        """Convert skill scripts into OpenAI tool definitions"""
+        scripts = self.get_skill_scripts(skill_name)
+        tools = []
+        
+        for script in scripts:
+            # Create a tool definition for each script
+            tool = {
+                "type": "function",
+                "function": {
+                    "name": f"{skill_name}_{script['name']}",
+                    "description": f"Execute the {script['name']} script from the {skill_name} skill",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "params": {
+                                "type": "object",
+                                "description": "Parameters to pass to the script as JSON",
+                                "additionalProperties": True
+                            }
+                        },
+                        "required": []
+                    }
+                }
+            }
+            tools.append(tool)
+        
+        return tools
+    
+    def execute_skill_script(self, skill_name: str, script_name: str, parameters: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Execute a specific skill script with given parameters"""
         if skill_name not in self.skills:
             return {"error": f"Skill '{skill_name}' not found"}
         
         skill = self.skills[skill_name]
         skill_path = Path(skill['path'])
-        
-        # Look for scripts in the scripts directory
         scripts_dir = skill_path / "scripts"
+        
         if not scripts_dir.exists():
             return {"error": f"No scripts directory found for skill '{skill_name}'"}
         
-        # Try to find a script with the skill name
-        script_path = scripts_dir / f"{skill_name}.py"
+        script_path = scripts_dir / f"{script_name}.py"
         if not script_path.exists():
-            # Try script.py as fallback
-            script_path = scripts_dir / "script.py"
-            if not script_path.exists():
-                return {"error": f"No script found for skill '{skill_name}'"}
+            return {"error": f"Script '{script_name}' not found for skill '{skill_name}'"}
         
         try:
             # Execute the skill script with parameters
@@ -185,10 +231,17 @@ class AgentSkillsFramework:
         # Initialize skill loader
         self.skill_loader = SkillLoader()
         
-        # Conversation history
-        self.messages = []
+        # Conversation history - start with system message
+        skills_xml = self.skill_loader.get_skills_xml()
+        system_message = f"""You are a helpful AI assistant with access to skills.
+
+{skills_xml}
+
+When a user needs help with a task that matches a skill's description, mention the skill in your response. The skill will then be activated and you'll have access to tools to execute it."""
+        
+        self.messages = [{"role": "system", "content": system_message}]
     
-    def run(self, user_input: str, max_iterations: int = 5) -> str:
+    def run(self, user_input: str, max_iterations: int = 10) -> str:
         """
         Main agent loop that processes user input through skill selection and execution
         
@@ -202,140 +255,104 @@ class AgentSkillsFramework:
         # Add user message to history
         self.messages.append({"role": "user", "content": user_input})
         
+        # Track active skill and its tools
+        active_skill = None
+        active_tools = []
+        
         iteration = 0
         while iteration < max_iterations:
             iteration += 1
             
-            # Step 1: Get available skills and ask LLM to select one
-            response = self._get_skill_selection()
+            # Prepare tools based on active skill
+            tools = active_tools if active_skill else None
             
-            if not response:
-                break
-            
-            # Step 2: Check if LLM wants to execute a skill
-            skill_to_execute = self._parse_skill_selection(response)
-            
-            if not skill_to_execute:
-                # LLM decided not to execute any skill, return the response
-                return response
-            
-            # Step 3: Load skill metadata into context and ask if LLM wants to execute
-            execution_decision = self._get_execution_decision(skill_to_execute)
-            
-            if not execution_decision.get("execute", False):
-                # LLM decided not to execute, return the response
-                return execution_decision.get("response", response)
-            
-            # Step 4: Execute the skill
-            result = self.skill_loader.execute_skill(
-                skill_to_execute["name"],
-                skill_to_execute.get("parameters", {})
-            )
-            
-            # Step 5: Pass result back to LLM
-            result_message = f"Skill '{skill_to_execute['name']}' executed. Result: {json.dumps(result)}"
-            self.messages.append({"role": "assistant", "content": result_message})
-            
-            # Get final response from LLM based on execution result
-            final_response = self._get_final_response()
-            
-            return final_response
+            # Get LLM response with tools
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=self.messages,
+                    tools=tools if tools else None
+                )
+                
+                message = response.choices[0].message
+                
+                # Check if LLM wants to call a tool
+                if message.tool_calls:
+                    # Add assistant message with tool calls to history
+                    self.messages.append({
+                        "role": "assistant",
+                        "content": message.content,
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": tc.type,
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments
+                                }
+                            }
+                            for tc in message.tool_calls
+                        ]
+                    })
+                    
+                    # Execute each tool call
+                    for tool_call in message.tool_calls:
+                        function_name = tool_call.function.name
+                        function_args = json.loads(tool_call.function.arguments)
+                        
+                        # Parse skill_name and script_name from function_name
+                        # Format: skillname_scriptname
+                        if '_' in function_name:
+                            parts = function_name.rsplit('_', 1)
+                            skill_name = parts[0]
+                            script_name = parts[1]
+                            
+                            # Execute the script
+                            result = self.skill_loader.execute_skill_script(
+                                skill_name,
+                                script_name,
+                                function_args.get("params", {})
+                            )
+                            
+                            # Add tool response to messages
+                            self.messages.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": json.dumps(result)
+                            })
+                    
+                    # Continue loop to get final response
+                    continue
+                
+                # Check if we need to activate a skill
+                if not active_skill and message.content:
+                    # Check if message mentions a skill
+                    for skill_name in self.skill_loader.skills.keys():
+                        if skill_name.lower() in message.content.lower():
+                            # Activate this skill
+                            skill_content = self.skill_loader.activate_skill(skill_name)
+                            active_skill = skill_name
+                            active_tools = self.skill_loader.get_skill_tools(skill_name)
+                            
+                            # Add skill activation to context
+                            skill_message = f"Activating skill '{skill_name}'.\n\nFull skill instructions:\n{skill_content}\n\nYou now have access to the following tools from this skill. Use them to complete the user's request."
+                            self.messages.append({"role": "assistant", "content": message.content})
+                            self.messages.append({"role": "user", "content": skill_message})
+                            
+                            # Continue to next iteration with tools available
+                            break
+                    else:
+                        # No skill needed, return response
+                        return message.content
+                else:
+                    # Return final response
+                    return message.content if message.content else "I've completed the task."
+                    
+            except Exception as e:
+                print(f"Error calling LLM: {e}")
+                return f"Error: {str(e)}"
         
         return "Maximum iterations reached. Unable to complete the request."
-    
-    def _get_skill_selection(self) -> str:
-        """Ask LLM to select a skill to use"""
-        # Use XML format for skills as per Agent Skills specification
-        skills_xml = self.skill_loader.get_skills_xml()
-        
-        system_message = f"""You are a helpful AI assistant with access to skills.
-
-{skills_xml}
-
-When a user asks you to do something, you can:
-1. Select a skill to use by responding with: SKILL:<skill_name>:<parameters_json>
-2. Or respond directly if no skill is needed
-
-For example:
-- To use the greet skill with a name: SKILL:greet:{{"name":"Alice"}}
-- To use the greet skill without a name: SKILL:greet:{{}}
-- To respond directly: Just provide your response
-"""
-        
-        messages = [{"role": "system", "content": system_message}] + self.messages
-        
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            print(f"Error calling LLM: {e}")
-            return None
-    
-    def _parse_skill_selection(self, response: str) -> Optional[Dict[str, Any]]:
-        """Parse LLM response to extract skill selection"""
-        if not response or not response.startswith("SKILL:"):
-            return None
-        
-        try:
-            # Format: SKILL:<skill_name>:<parameters_json>
-            parts = response[6:].split(":", 1)
-            skill_name = parts[0].strip()
-            parameters = {}
-            
-            if len(parts) > 1 and parts[1].strip():
-                parameters = json.loads(parts[1].strip())
-            
-            return {
-                "name": skill_name,
-                "parameters": parameters
-            }
-        except Exception as e:
-            print(f"Error parsing skill selection: {e}")
-            return None
-    
-    def _get_execution_decision(self, skill_info: Dict[str, Any]) -> Dict[str, Any]:
-        """Activate skill by loading full SKILL.md content"""
-        skill_name = skill_info["name"]
-        
-        if skill_name not in self.skill_loader.skills:
-            return {"execute": False, "response": f"Skill '{skill_name}' not found"}
-        
-        # Activate the skill (load full SKILL.md content)
-        skill_content = self.skill_loader.activate_skill(skill_name)
-        
-        if not skill_content:
-            return {"execute": False, "response": f"Could not load skill '{skill_name}'"}
-        
-        # Add skill instructions to context
-        activation_message = f"""Activating skill '{skill_name}'.
-
-Full skill instructions:
-{skill_content}
-
-Parameters you want to use: {json.dumps(skill_info.get('parameters', {}))}
-"""
-        
-        self.messages.append({"role": "assistant", "content": activation_message})
-        
-        # Auto-execute after activation (following progressive disclosure pattern)
-        return {"execute": True}
-    
-    def _get_final_response(self) -> str:
-        """Get final response from LLM after skill execution"""
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=self.messages + [
-                    {"role": "user", "content": "Based on the skill execution result above, provide a natural response to the user."}
-                ]
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            print(f"Error getting final response: {e}")
-            return "I encountered an error processing the result."
 
 
 def main():

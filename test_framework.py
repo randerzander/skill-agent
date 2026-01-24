@@ -55,69 +55,39 @@ def test_skill_execution(loader):
     """Test skill execution"""
     print("\nTesting skill execution...")
     
-    # Test greet with name
-    result = loader.execute_skill('greet', {'name': 'TestUser'})
+    # Test greet script with name
+    result = loader.execute_skill_script('greet', 'greet', {'name': 'TestUser'})
     assert 'result' in result, "Expected result key"
     assert 'TestUser' in result['result'], "Expected name in greeting"
-    print(f"✓ Greet with name: {result['result']}")
+    print(f"✓ Greet with name: {result['result'][:80]}...")
     
-    # Test greet without name
-    result = loader.execute_skill('greet', {})
+    # Test greet script without name
+    result = loader.execute_skill_script('greet', 'greet', {})
     assert 'result' in result, "Expected result key"
-    print(f"✓ Greet without name: {result['result']}")
+    print(f"✓ Greet without name: {result['result'][:80]}...")
     
     # Test non-existent skill
-    result = loader.execute_skill('nonexistent', {})
+    result = loader.execute_skill_script('nonexistent', 'test', {})
     assert 'error' in result, "Expected error for non-existent skill"
     print(f"✓ Non-existent skill error handling: {result['error']}")
 
-def test_parse_skill_selection():
-    """Test skill selection parsing"""
-    print("\nTesting skill selection parsing...")
-    from agent import AgentSkillsFramework
+def test_skill_tools(loader):
+    """Test skill tools generation"""
+    print("\nTesting skill tools...")
     
-    # Create a mock agent (will fail on API key, but we only need the parser)
-    class MockAgent:
-        def _parse_skill_selection(self, response):
-            # Copy the method from AgentSkillsFramework
-            if not response or not response.startswith("SKILL:"):
-                return None
-            
-            try:
-                parts = response[6:].split(":", 1)
-                skill_name = parts[0].strip()
-                parameters = {}
-                
-                if len(parts) > 1 and parts[1].strip():
-                    parameters = json.loads(parts[1].strip())
-                
-                return {
-                    "name": skill_name,
-                    "parameters": parameters
-                }
-            except Exception as e:
-                print(f"Error parsing skill selection: {e}")
-                return None
+    # Test getting scripts
+    scripts = loader.get_skill_scripts('greet')
+    assert len(scripts) > 0, "Expected at least one script"
+    assert scripts[0]['name'] == 'greet', "Expected greet script"
+    print(f"✓ Found {len(scripts)} script(s) for greet skill")
     
-    agent = MockAgent()
-    
-    # Test valid skill selection with parameters
-    result = agent._parse_skill_selection('SKILL:greet:{"name":"Alice"}')
-    assert result is not None, "Failed to parse valid skill selection"
-    assert result['name'] == 'greet', "Wrong skill name"
-    assert result['parameters']['name'] == 'Alice', "Wrong parameter"
-    print(f"✓ Parsed skill with params: {result}")
-    
-    # Test valid skill selection without parameters
-    result = agent._parse_skill_selection('SKILL:greet:{}')
-    assert result is not None, "Failed to parse skill without params"
-    assert result['name'] == 'greet', "Wrong skill name"
-    print(f"✓ Parsed skill without params: {result}")
-    
-    # Test non-skill response
-    result = agent._parse_skill_selection('Just a regular response')
-    assert result is None, "Should return None for non-skill response"
-    print("✓ Correctly ignored non-skill response")
+    # Test tool generation
+    tools = loader.get_skill_tools('greet')
+    assert len(tools) > 0, "Expected at least one tool"
+    assert tools[0]['type'] == 'function', "Expected function type"
+    assert 'greet_greet' == tools[0]['function']['name'], "Expected greet_greet function name"
+    print(f"✓ Generated {len(tools)} tool(s) for greet skill")
+    print(f"✓ Tool name: {tools[0]['function']['name']}")
 
 def main():
     """Run all tests"""
@@ -129,7 +99,7 @@ def main():
         loader = test_skill_loader()
         test_skill_activation(loader)
         test_skill_execution(loader)
-        test_parse_skill_selection()
+        test_skill_tools(loader)
         
         print("\n" + "=" * 60)
         print("All tests passed! ✓")
@@ -146,5 +116,7 @@ def main():
     
     return 0
 
+if __name__ == "__main__":
+    exit(main())
 if __name__ == "__main__":
     exit(main())

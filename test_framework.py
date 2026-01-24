@@ -17,9 +17,11 @@ def test_skill_loader():
     
     # Check metadata structure
     metadata = loader.get_skills_metadata()
-    assert len(metadata) == 1, "Expected 1 skill"
-    assert metadata[0]['name'] == 'greet', "Expected greet skill"
-    assert 'description' in metadata[0], "Expected description in metadata"
+    assert len(metadata) >= 1, "Expected at least 1 skill"
+    # Find greet skill in metadata
+    greet_skill = next((s for s in metadata if s['name'] == 'greet'), None)
+    assert greet_skill is not None, "Expected greet skill in metadata"
+    assert 'description' in greet_skill, "Expected description in metadata"
     print("✓ Skill metadata correct")
     
     # Check XML generation

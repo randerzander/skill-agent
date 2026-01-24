@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Skills Framework - Web Frontend</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://unpkg.com/htmx.org/dist/ext/sse.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        header {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        h1 {
+            color: #667eea;
+            font-size: 28px;
+            margin-bottom: 5px;
+        }
+        
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .main-content {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+        }
+        
+        .left-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .right-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .card-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 8px;
+        }
+        
+        .input-section {
+            flex: 0 0 auto;
+        }
+        
+        .input-group {
+            display: flex;
+            gap: 10px;
+        }
+        
+        #userInput {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        #userInput:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        button {
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        button:hover:not(:disabled) {
+            background: #5568d3;
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .logs-section {
+            flex: 1;
+            min-height: 400px;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        
+        .log-entry {
+            padding: 10px;
+            margin-bottom: 8px;
+            border-radius: 6px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            animation: slideIn 0.3s ease-out;
+        }
+        
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        
+        .log-entry .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #ccc;
+            border-top-color: #667eea;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .log-entry .icon {
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+        
+        .log-entry .message {
+            flex: 1;
+            color: #333;
+        }
+        
+        .log-entry .time {
+            color: #999;
+            font-size: 11px;
+            flex-shrink: 0;
+        }
+        
+        .log-entry.user { background: #e3f2fd; }
+        .log-entry.llm { background: #f3e5f5; }
+        .log-entry.tool { background: #e8f5e9; }
+        .log-entry.error { background: #ffebee; }
+        .log-entry.skill { background: #fff3e0; }
+        .log-entry.complete { background: #c8e6c9; }
+        
+        .skills-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .skill-item {
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 6px;
+            border-left: 3px solid #667eea;
+        }
+        
+        .skill-name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 4px;
+        }
+        
+        .skill-desc {
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .tools-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .tool-item {
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 6px;
+            border-left: 3px solid #764ba2;
+        }
+        
+        .tool-name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 4px;
+        }
+        
+        .tool-args {
+            font-size: 11px;
+            color: #666;
+            font-family: 'Courier New', monospace;
+            background: #fff;
+            padding: 4px 8px;
+            border-radius: 4px;
+            margin-top: 4px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        
+        .overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        
+        .overlay.active {
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+        }
+        
+        .overlay-content {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            max-width: 1000px;
+            width: 100%;
+            margin: 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+        }
+        
+        .overlay-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #667eea;
+        }
+        
+        .overlay-title {
+            font-size: 24px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .close-btn {
+            background: #e0e0e0;
+            color: #333;
+            padding: 8px 16px;
+            font-size: 16px;
+        }
+        
+        .close-btn:hover {
+            background: #ccc;
+        }
+        
+        .chat-message {
+            margin-bottom: 15px;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #ccc;
+        }
+        
+        .chat-message.user {
+            background: #e3f2fd;
+            border-left-color: #2196f3;
+        }
+        
+        .chat-message.assistant {
+            background: #f3e5f5;
+            border-left-color: #9c27b0;
+        }
+        
+        .chat-message.tool {
+            background: #e8f5e9;
+            border-left-color: #4caf50;
+        }
+        
+        .chat-message.system {
+            background: #fff3e0;
+            border-left-color: #ff9800;
+        }
+        
+        .message-role {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            font-size: 11px;
+        }
+        
+        .message-content {
+            color: #333;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-size: 13px;
+        }
+        
+        .message-tool-calls {
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.05);
+            border-radius: 4px;
+        }
+        
+        .tool-call {
+            font-size: 12px;
+            font-family: 'Courier New', monospace;
+            margin-bottom: 5px;
+        }
+        
+        .toggle-history-btn {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            background: #764ba2;
+            color: white;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            font-size: 24px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            z-index: 999;
+        }
+        
+        .toggle-history-btn:hover {
+            background: #653a8a;
+            transform: scale(1.05);
+        }
+        
+        .empty-state {
+            text-align: center;
+            color: #999;
+            padding: 40px;
+            font-style: italic;
+        }
+        
+        @media (max-width: 1024px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🤖 Agent Skills Framework</h1>
+            <p class="subtitle">Interactive Web Frontend with HTMX</p>
+        </header>
+        
+        <div class="main-content">
+            <div class="left-panel">
+                <div class="card input-section">
+                    <h2 class="card-title">💬 Chat with Agent</h2>
+                    <div class="input-group">
+                        <input 
+                            type="text" 
+                            id="userInput" 
+                            placeholder="Enter your request here..." 
+                            onkeypress="if(event.key === 'Enter') runAgent()"
+                        >
+                        <button id="submitBtn" onclick="runAgent()">Send</button>
+                    </div>
+                </div>
+                
+                <div class="card logs-section">
+                    <h2 class="card-title">📋 Execution Log</h2>
+                    <div id="logs">
+                        <div class="empty-state">No activity yet. Send a message to start!</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="right-panel">
+                <div class="card">
+                    <h2 class="card-title">🎯 Skills Loaded</h2>
+                    <div id="skillsList" class="skills-list">
+                        <div class="empty-state">Loading...</div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <h2 class="card-title">🛠️ Tools Called</h2>
+                    <div id="toolsList" class="tools-list">
+                        <div class="empty-state">No tools called yet</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <button class="toggle-history-btn" onclick="toggleOverlay()">💭</button>
+    
+    <div id="chatOverlay" class="overlay">
+        <div class="overlay-content">
+            <div class="overlay-header">
+                <h2 class="overlay-title">🗨️ Full Chat History</h2>
+                <button class="close-btn" onclick="toggleOverlay()">Close</button>
+            </div>
+            <div id="chatHistory">
+                <div class="empty-state">No messages yet</div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let eventSource = null;
+        let startTime = null;
+        
+        // Load skills on page load
+        window.addEventListener('DOMContentLoaded', loadSkills);
+        
+        function loadSkills() {
+            fetch('/api/status')
+                .then(r => r.json())
+                .then(data => {
+                    const skillsList = document.getElementById('skillsList');
+                    if (data.skills_loaded && data.skills_loaded.length > 0) {
+                        skillsList.innerHTML = data.skills_loaded.map(skill => `
+                            <div class="skill-item">
+                                <div class="skill-name">${escapeHtml(skill.name)}</div>
+                                <div class="skill-desc">${escapeHtml(skill.description)}</div>
+                            </div>
+                        `).join('');
+                    } else {
+                        skillsList.innerHTML = '<div class="empty-state">No skills loaded</div>';
+                    }
+                })
+                .catch(err => {
+                    console.error('Error loading skills:', err);
+                });
+        }
+        
+        function runAgent() {
+            const input = document.getElementById('userInput').value.trim();
+            if (!input) return;
+            
+            const submitBtn = document.getElementById('submitBtn');
+            const logsDiv = document.getElementById('logs');
+            
+            // Clear logs and disable input
+            logsDiv.innerHTML = '';
+            submitBtn.disabled = true;
+            document.getElementById('userInput').disabled = true;
+            
+            // Clear tools list
+            document.getElementById('toolsList').innerHTML = '<div class="empty-state">No tools called yet</div>';
+            
+            startTime = Date.now();
+            
+            // Create EventSource for SSE
+            eventSource = new EventSource('/api/run?' + new URLSearchParams({
+                input: input
+            }));
+            
+            // Make POST request to start the agent
+            fetch('/api/run', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ input: input })
+            }).then(response => {
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                
+                function readStream() {
+                    reader.read().then(({ done, value }) => {
+                        if (done) {
+                            submitBtn.disabled = false;
+                            document.getElementById('userInput').disabled = false;
+                            document.getElementById('userInput').value = '';
+                            return;
+                        }
+                        
+                        const text = decoder.decode(value);
+                        const lines = text.split('\n');
+                        
+                        for (let line of lines) {
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    const event = JSON.parse(line.substring(6));
+                                    handleEvent(event);
+                                } catch (e) {
+                                    console.error('Error parsing event:', e);
+                                }
+                            }
+                        }
+                        
+                        readStream();
+                    });
+                }
+                
+                readStream();
+            }).catch(err => {
+                console.error('Error running agent:', err);
+                addLog('error', 'Failed to run agent: ' + err.message, 0);
+                submitBtn.disabled = false;
+                document.getElementById('userInput').disabled = false;
+            });
+        }
+        
+        function handleEvent(event) {
+            const elapsed = event.elapsed || ((Date.now() - startTime) / 1000);
+            
+            switch (event.type) {
+                case 'start':
+                    addLog('user', `User: ${event.input}`, elapsed);
+                    break;
+                    
+                case 'user_message':
+                    addLog('user', `📨 User: ${event.data.content}`, elapsed);
+                    break;
+                    
+                case 'llm_call_start':
+                    addLog('llm', `🤔 Calling LLM (iteration ${event.data.iteration})...`, elapsed, true);
+                    break;
+                    
+                case 'llm_response':
+                    if (event.data.content) {
+                        addLog('llm', `🤖 LLM: ${event.data.content}`, elapsed);
+                    }
+                    if (event.data.tool_calls && event.data.tool_calls.length > 0) {
+                        event.data.tool_calls.forEach(tc => {
+                            addLog('llm', `🔧 LLM wants to call: ${tc.function}`, elapsed);
+                        });
+                    }
+                    break;
+                    
+                case 'skill_activation':
+                    addLog('skill', `⚡ Activating skill: ${event.data.skill_name}...`, elapsed, true);
+                    break;
+                    
+                case 'skill_activated':
+                    addLog('skill', `✅ Skill activated: ${event.data.skill_name} (${event.data.tools_count} tools)`, elapsed);
+                    break;
+                    
+                case 'skill_activation_failed':
+                    addLog('error', `❌ Failed to activate skill: ${event.data.skill_name}`, elapsed);
+                    break;
+                    
+                case 'tool_call':
+                    addLog('tool', `🛠️ Calling tool: ${event.data.tool_name}`, elapsed, true);
+                    addToolToList(event.data);
+                    break;
+                    
+                case 'tool_result':
+                    const resultStr = JSON.stringify(event.data.result).substring(0, 100);
+                    addLog('tool', `✓ Tool result: ${resultStr}...`, elapsed);
+                    break;
+                    
+                case 'final_response':
+                    addLog('complete', `✅ Complete: ${event.data.content}`, elapsed);
+                    break;
+                    
+                case 'complete':
+                    addLog('complete', `🎉 Agent completed!`, elapsed);
+                    updateChatHistory();
+                    break;
+                    
+                case 'error':
+                    addLog('error', `❌ Error: ${event.data.message}`, elapsed);
+                    break;
+                    
+                case 'max_iterations':
+                    addLog('error', `⚠️ Maximum iterations reached`, elapsed);
+                    break;
+            }
+        }
+        
+        function addLog(type, message, elapsed, spinner = false) {
+            const logsDiv = document.getElementById('logs');
+            
+            // Remove empty state if present
+            const emptyState = logsDiv.querySelector('.empty-state');
+            if (emptyState) {
+                emptyState.remove();
+            }
+            
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry ${type}`;
+            
+            const icon = spinner ? '<span class="spinner"></span>' : '<span class="icon">•</span>';
+            const time = `${elapsed.toFixed(1)}s`;
+            
+            logEntry.innerHTML = `
+                ${icon}
+                <span class="message">${escapeHtml(message)}</span>
+                <span class="time">${time}</span>
+            `;
+            
+            logsDiv.appendChild(logEntry);
+            logsDiv.scrollTop = logsDiv.scrollHeight;
+        }
+        
+        function addToolToList(toolData) {
+            const toolsList = document.getElementById('toolsList');
+            
+            // Remove empty state if present
+            const emptyState = toolsList.querySelector('.empty-state');
+            if (emptyState) {
+                emptyState.remove();
+            }
+            
+            const toolItem = document.createElement('div');
+            toolItem.className = 'tool-item';
+            toolItem.innerHTML = `
+                <div class="tool-name">${escapeHtml(toolData.tool_name)}</div>
+                <div class="tool-args">${escapeHtml(JSON.stringify(toolData.arguments, null, 2))}</div>
+            `;
+            
+            toolsList.appendChild(toolItem);
+        }
+        
+        function toggleOverlay() {
+            const overlay = document.getElementById('chatOverlay');
+            overlay.classList.toggle('active');
+            
+            if (overlay.classList.contains('active')) {
+                updateChatHistory();
+            }
+        }
+        
+        function updateChatHistory() {
+            fetch('/api/chat_history')
+                .then(r => r.json())
+                .then(data => {
+                    const historyDiv = document.getElementById('chatHistory');
+                    
+                    if (data.messages && data.messages.length > 0) {
+                        historyDiv.innerHTML = data.messages.map(msg => {
+                            let content = msg.content || '(no content)';
+                            let toolCallsHtml = '';
+                            
+                            if (msg.tool_calls) {
+                                toolCallsHtml = `
+                                    <div class="message-tool-calls">
+                                        <strong>Tool Calls:</strong>
+                                        ${msg.tool_calls.map(tc => `
+                                            <div class="tool-call">
+                                                📞 ${tc.function.name}(${tc.function.arguments})
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                `;
+                            }
+                            
+                            return `
+                                <div class="chat-message ${msg.role}">
+                                    <div class="message-role">${msg.role}</div>
+                                    <div class="message-content">${escapeHtml(content)}</div>
+                                    ${toolCallsHtml}
+                                </div>
+                            `;
+                        }).join('');
+                    } else {
+                        historyDiv.innerHTML = '<div class="empty-state">No messages yet</div>';
+                    }
+                })
+                .catch(err => {
+                    console.error('Error loading chat history:', err);
+                });
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

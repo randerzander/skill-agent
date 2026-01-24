@@ -1,0 +1,12 @@
+{
+  "name": "greet",
+  "description": "Greets the user with a friendly message. Can personalize the greeting with the user's name if provided.",
+  "parameters": {
+    "name": {
+      "type": "string",
+      "description": "The name of the person to greet (optional)",
+      "required": false
+    }
+  },
+  "script": "script.py"
+}

@@ -1,0 +1,30 @@
+---
+# Agent Skills Framework Configuration
+
+# OpenAI API Configuration
+openai:
+  base_url: "https://openrouter.ai/api/v1"
+  model: "nvidia/nemotron-3-nano-30b-a3b:free"
+
+# Judge model for evaluations
+judge:
+  model: "nvidia/nemotron-3-nano-30b-a3b:free"
+
+# RAG/Retrieval Configuration
+retrieval:
+  enabled: false
+  tokens_per_chunk: 2048
+  top_k: 2
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+
+# System prompt (optional - uses default if not specified)
+system_message: |
+  You are a helpful AI assistant with access to various skills.
+  
+  Activate available skills to complete tasks. After each skill, consider whether you need to activate another skill to complete the user's request.
+
+# Skills Configuration
+skills:
+  # Whitelist of enabled skills (empty list = all skills enabled)
+  enabled:
+    - web

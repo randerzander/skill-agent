@@ -31,8 +31,8 @@ class SkillLoader:
         with open(skill_md_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
-        # Extract YAML frontmatter
-        frontmatter_match = re.match(r'^---\s*\n(.*?)\n---\s*\n(.*)', content, re.DOTALL)
+        # Extract YAML frontmatter (more flexible pattern)
+        frontmatter_match = re.match(r'^---\s*\n(.*?)\n---\s*(?:\n|$)(.*)', content, re.DOTALL)
         if not frontmatter_match:
             raise ValueError(f"No valid YAML frontmatter found in {skill_md_path}")
         

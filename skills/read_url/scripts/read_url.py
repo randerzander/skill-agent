@@ -6,6 +6,7 @@ Fetches and extracts content from URLs, converting HTML to readable markdown
 import requests
 import html2text
 from readability import Document
+from urllib.parse import urlparse
 
 
 def execute(params):
@@ -23,10 +24,35 @@ def execute(params):
     if not url:
         return {"error": "URL parameter is required"}
     
+    # Validate URL scheme (prevent SSRF attacks)
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ['http', 'https']:
+            return {"error": f"Invalid URL scheme. Only HTTP and HTTPS are supported."}
+        
+        # Block private IP ranges to prevent SSRF
+        hostname = parsed.hostname
+        if hostname:
+            # Block localhost and private IPs
+            if hostname in ['localhost', '127.0.0.1', '0.0.0.0'] or \
+               hostname.startswith('192.168.') or \
+               hostname.startswith('10.') or \
+               hostname.startswith('172.16.') or hostname.startswith('172.17.') or \
+               hostname.startswith('172.18.') or hostname.startswith('172.19.') or \
+               hostname.startswith('172.20.') or hostname.startswith('172.21.') or \
+               hostname.startswith('172.22.') or hostname.startswith('172.23.') or \
+               hostname.startswith('172.24.') or hostname.startswith('172.25.') or \
+               hostname.startswith('172.26.') or hostname.startswith('172.27.') or \
+               hostname.startswith('172.28.') or hostname.startswith('172.29.') or \
+               hostname.startswith('172.30.') or hostname.startswith('172.31.'):
+                return {"error": "Access to private IP addresses is not allowed."}
+    except Exception as e:
+        return {"error": f"Invalid URL format: {str(e)}"}
+    
     try:
         # Build headers with User-Agent to avoid being blocked
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (compatible; SkillAgent/1.0; +https://github.com/randerzander/skill-agent)'
         }
         
         # Fetch the URL content

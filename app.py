@@ -15,7 +15,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
+
+# Generate a secure random secret key if not provided in environment
+import secrets
+default_secret = secrets.token_hex(32)
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', default_secret)
 
 # Global agent instance and state
 agent = None
@@ -109,10 +113,14 @@ class WebAgentWrapper:
                 
                 # Extract thinking/reasoning if available (for models that support it)
                 thinking = None
-                if hasattr(message, 'reasoning_content'):
-                    thinking = message.reasoning_content
-                elif hasattr(message, 'thinking'):
-                    thinking = message.thinking
+                try:
+                    if hasattr(message, 'reasoning_content') and message.reasoning_content:
+                        thinking = message.reasoning_content
+                    elif hasattr(message, 'thinking') and message.thinking:
+                        thinking = message.thinking
+                except Exception:
+                    # Silently ignore if thinking extraction fails
+                    pass
                 
                 # Add LLM response event
                 self.add_event('llm_response', {
@@ -353,4 +361,5 @@ if __name__ == '__main__':
     
     # Run the app
     port = int(os.getenv('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True, threaded=True)
+    debug = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
+    app.run(host='0.0.0.0', port=port, debug=debug, threaded=True)

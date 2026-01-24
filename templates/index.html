@@ -399,15 +399,15 @@
             <div class="left-panel">
                 <div class="card input-section">
                     <h2 class="card-title">💬 Chat with Agent</h2>
-                    <div class="input-group">
+                    <form class="input-group" onsubmit="event.preventDefault(); runAgent();">
                         <input 
                             type="text" 
                             id="userInput" 
                             placeholder="Enter your request here..." 
-                            onkeypress="if(event.key === 'Enter') runAgent()"
+                            aria-label="Enter your request to the agent"
                         >
-                        <button id="submitBtn" onclick="runAgent()">Send</button>
-                    </div>
+                        <button id="submitBtn" type="submit" aria-label="Send message to agent">Send</button>
+                    </form>
                 </div>
                 
                 <div class="card logs-section">
@@ -436,13 +436,13 @@
         </div>
     </div>
     
-    <button class="toggle-history-btn" onclick="toggleOverlay()">💭</button>
+    <button class="toggle-history-btn" onclick="toggleOverlay()" aria-label="Toggle chat history overlay">💭</button>
     
     <div id="chatOverlay" class="overlay">
         <div class="overlay-content">
             <div class="overlay-header">
                 <h2 class="overlay-title">🗨️ Full Chat History</h2>
-                <button class="close-btn" onclick="toggleOverlay()">Close</button>
+                <button class="close-btn" onclick="toggleOverlay()" aria-label="Close chat history overlay">Close</button>
             </div>
             <div id="chatHistory">
                 <div class="empty-state">No messages yet</div>

@@ -58,7 +58,7 @@ def simulate_agent_workflow():
     print("\n" + "=" * 70)
     print("[Step 6] LLM calls tool with parameters")
     tool_call = {
-        "function": "greet_greet",
+        "function": "greet",
         "arguments": {"params": {"name": "Alice"}}
     }
     print(f"Tool call: {json.dumps(tool_call, indent=2)}")

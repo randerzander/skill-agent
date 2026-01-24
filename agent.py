@@ -148,10 +148,11 @@ class SkillLoader:
         
         for script in scripts:
             # Create a tool definition for each script
+            # Use just the script name as the tool name
             tool = {
                 "type": "function",
                 "function": {
-                    "name": f"{skill_name}_{script['name']}",
+                    "name": script['name'],
                     "description": f"Execute the {script['name']} script from the {skill_name} skill",
                     "parameters": {
                         "type": "object",
@@ -300,16 +301,14 @@ When a user needs help with a task that matches a skill's description, mention t
                         function_name = tool_call.function.name
                         function_args = json.loads(tool_call.function.arguments)
                         
-                        # Parse skill_name and script_name from function_name
-                        # Format: skillname_scriptname
-                        if '_' in function_name:
-                            parts = function_name.rsplit('_', 1)
-                            skill_name = parts[0]
-                            script_name = parts[1]
+                        # The function name is just the script name
+                        # We know which skill is active
+                        if active_skill:
+                            script_name = function_name
                             
                             # Execute the script
                             result = self.skill_loader.execute_skill_script(
-                                skill_name,
+                                active_skill,
                                 script_name,
                                 function_args.get("params", {})
                             )
@@ -321,7 +320,8 @@ When a user needs help with a task that matches a skill's description, mention t
                                 "content": json.dumps(result)
                             })
                     
-                    # Continue loop to get final response
+                    # After tool execution, clear tools and continue to get final response
+                    active_tools = []
                     continue
                 
                 # Check if we need to activate a skill

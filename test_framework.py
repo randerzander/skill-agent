@@ -85,7 +85,7 @@ def test_skill_tools(loader):
     tools = loader.get_skill_tools('greet')
     assert len(tools) > 0, "Expected at least one tool"
     assert tools[0]['type'] == 'function', "Expected function type"
-    assert 'greet_greet' == tools[0]['function']['name'], "Expected greet_greet function name"
+    assert 'greet' == tools[0]['function']['name'], "Expected greet function name"
     print(f"✓ Generated {len(tools)} tool(s) for greet skill")
     print(f"✓ Tool name: {tools[0]['function']['name']}")
 

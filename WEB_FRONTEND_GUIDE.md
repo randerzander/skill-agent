@@ -20,7 +20,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-4. Open your browser to: `http://localhost:5000`
+4. Open your browser to: `http://localhost:10000`
 
 ## Using the Interface
 
@@ -89,7 +89,7 @@ Read the content from https://example.com
 You can customize the server with these environment variables:
 
 - `OPENROUTER_API_KEY`: Your OpenRouter API key (required)
-- `PORT`: Server port (default: 5000)
+- `PORT`: Server port (default: 10000)
 - `SECRET_KEY`: Flask secret key (auto-generated if not set)
 - `FLASK_DEBUG`: Enable debug mode (set to "true" for development)
 
@@ -103,7 +103,7 @@ python app.py
 ## Troubleshooting
 
 ### Server won't start
-- Check that port 5000 is not already in use
+- Check that port 10000 is not already in use
 - Verify your `.env` file has a valid OPENROUTER_API_KEY
 - Make sure all dependencies are installed
 
@@ -129,7 +129,7 @@ export SECRET_KEY=$(python -c 'import secrets; print(secrets.token_hex(32))')
 2. Use a production WSGI server like Gunicorn:
 ```bash
 pip install gunicorn
-gunicorn -w 4 -b 0.0.0.0:5000 app:app
+gunicorn -w 4 -b 0.0.0.0:10000 app:app
 ```
 
 3. Set FLASK_DEBUG to false (or don't set it):

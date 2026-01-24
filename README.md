@@ -44,7 +44,7 @@ Run the web-based interface with HTMX:
 python app.py
 ```
 
-Then open your browser to `http://localhost:5000`
+Then open your browser to `http://localhost:10000`
 
 The web frontend provides:
 - 🎨 **Beautiful UI**: Modern, responsive interface with real-time updates
@@ -229,7 +229,7 @@ Flask-based web interface with HTMX for real-time updates:
 
 Environment variables (set in `.env`):
 - `OPENROUTER_API_KEY`: Your OpenRouter API key (required)
-- `PORT`: Port for web frontend (default: 5000)
+- `PORT`: Port for web frontend (default: 10000)
 - `SECRET_KEY`: Flask secret key (default: auto-generated for dev)
 
 ## Testing

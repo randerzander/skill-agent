@@ -7,6 +7,7 @@ import requests
 import html2text
 from readability import Document
 from urllib.parse import urlparse
+import ipaddress
 
 
 def execute(params):
@@ -33,26 +34,22 @@ def execute(params):
         # Block private IP ranges to prevent SSRF
         hostname = parsed.hostname
         if hostname:
-            # Block localhost and private IPs
-            if hostname in ['localhost', '127.0.0.1', '0.0.0.0'] or \
-               hostname.startswith('192.168.') or \
-               hostname.startswith('10.') or \
-               hostname.startswith('172.16.') or hostname.startswith('172.17.') or \
-               hostname.startswith('172.18.') or hostname.startswith('172.19.') or \
-               hostname.startswith('172.20.') or hostname.startswith('172.21.') or \
-               hostname.startswith('172.22.') or hostname.startswith('172.23.') or \
-               hostname.startswith('172.24.') or hostname.startswith('172.25.') or \
-               hostname.startswith('172.26.') or hostname.startswith('172.27.') or \
-               hostname.startswith('172.28.') or hostname.startswith('172.29.') or \
-               hostname.startswith('172.30.') or hostname.startswith('172.31.'):
-                return {"error": "Access to private IP addresses is not allowed."}
+            # Check if it's an IP address
+            try:
+                ip = ipaddress.ip_address(hostname)
+                if ip.is_private or ip.is_loopback or ip.is_link_local:
+                    return {"error": "Access to private IP addresses is not allowed."}
+            except ValueError:
+                # Not an IP address, check for localhost
+                if hostname.lower() in ['localhost']:
+                    return {"error": "Access to localhost is not allowed."}
     except Exception as e:
         return {"error": f"Invalid URL format: {str(e)}"}
     
     try:
         # Build headers with User-Agent to avoid being blocked
         headers = {
-            'User-Agent': 'Mozilla/5.0 (compatible; SkillAgent/1.0; +https://github.com/randerzander/skill-agent)'
+            'User-Agent': 'Mozilla/5.0 (compatible; SkillAgent/1.0)'
         }
         
         # Fetch the URL content

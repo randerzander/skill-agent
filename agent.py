@@ -10,14 +10,22 @@ import json
 import re
 import importlib.util
 import traceback
+import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from openai import OpenAI
 from dotenv import load_dotenv
 import yaml
+from rich.console import Console
+from rich.live import Live
+from rich.spinner import Spinner
+from rich.text import Text
 
 # Load environment variables
 load_dotenv()
+
+# Initialize Rich console
+console = Console()
 
 class SkillLoader:
     """Loads and manages agent skills following the Agent Skills specification"""
@@ -239,9 +247,45 @@ class AgentSkillsFramework:
 
 {skills_xml}
 
-When a user needs help with a task that matches a skill's description, mention the skill in your response. The skill will then be activated and you'll have access to tools to execute it."""
+When a user needs help with a task that matches a skill's description, you can activate that skill by using the activate_skill function. Once activated, you'll have access to tools to execute it.
+
+If the user is just asking about available skills or general questions, answer normally without activating any skills."""
         
         self.messages = [{"role": "system", "content": system_message}]
+        
+        # Define the activate_skill tool
+        self.activate_skill_tool = {
+            "type": "function",
+            "function": {
+                "name": "activate_skill",
+                "description": "Activate a skill to gain access to its tools and functionality",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "skill_name": {
+                            "type": "string",
+                            "description": "The name of the skill to activate"
+                        }
+                    },
+                    "required": ["skill_name"]
+                }
+            }
+        }
+    
+    def _create_progress_text(self, message: str, elapsed: float, spinner_char: str = "⠋", extra_info: str = "") -> Text:
+        """Create a formatted progress text with spinner and elapsed time"""
+        text = Text()
+        text.append(spinner_char, style="cyan bold")
+        text.append(f" {message} ", style="dim")
+        if extra_info:
+            text.append(extra_info, style="blue")
+            text.append(" ", style="dim")
+        text.append(f"({elapsed:.1f}s)", style="yellow")
+        return text
+    
+    def _estimate_tokens(self, text: str) -> int:
+        """Estimate token count from text length"""
+        return int(len(text) / 4.5)
     
     def run(self, user_input: str, max_iterations: int = 10) -> str:
         """
@@ -266,15 +310,89 @@ When a user needs help with a task that matches a skill's description, mention t
             iteration += 1
             
             # Prepare tools based on active skill
-            tools = active_tools if active_skill else None
+            # If no skill is active, offer the activate_skill tool
+            # If a skill is active, offer that skill's tools
+            if active_skill:
+                tools = active_tools
+            else:
+                tools = [self.activate_skill_tool]
             
             # Get LLM response with tools
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=self.messages,
-                    tools=tools if tools else None
-                )
+                # Create a live display for the LLM call
+                spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+                start_time = time.time()
+                frame_index = 0
+                
+                # Calculate input tokens
+                messages_text = json.dumps(self.messages)
+                input_tokens = self._estimate_tokens(messages_text)
+                model_display = self.model.split('/')[-1] if '/' in self.model else self.model
+                
+                # Check if we're in an interactive terminal
+                if sys.stdout.isatty():
+                    with Live(console=console, refresh_per_second=10, transient=False) as live:
+                        # Start the spinner
+                        live.update(self._create_progress_text(
+                            f"Calling LLM [{model_display}]", 
+                            0.0, 
+                            spinner_frames[0],
+                            f"~{input_tokens:,} tokens in"
+                        ))
+                        
+                        # Make the API call in a way that allows us to update the display
+                        response = None
+                        import threading
+                        
+                        def make_call():
+                            nonlocal response
+                            response = self.client.chat.completions.create(
+                                model=self.model,
+                                messages=self.messages,
+                                tools=tools
+                            )
+                        
+                        thread = threading.Thread(target=make_call)
+                        thread.start()
+                        
+                        # Update the display while waiting
+                        while thread.is_alive():
+                            elapsed = time.time() - start_time
+                            live.update(self._create_progress_text(
+                                f"Calling LLM [{model_display}]", 
+                                elapsed, 
+                                spinner_frames[frame_index % len(spinner_frames)],
+                                f"~{input_tokens:,} tokens in"
+                            ))
+                            frame_index += 1
+                            time.sleep(0.1)
+                        
+                        thread.join()
+                        
+                        # Calculate output tokens
+                        message = response.choices[0].message
+                        output_text = message.content or ""
+                        if message.tool_calls:
+                            for tc in message.tool_calls:
+                                output_text += tc.function.name + tc.function.arguments
+                        output_tokens = self._estimate_tokens(output_text)
+                        
+                        # Final update with completion time
+                        elapsed = time.time() - start_time
+                        final_text = Text()
+                        final_text.append("✓", style="green bold")
+                        final_text.append(f" LLM call completed [{model_display}] ", style="dim")
+                        final_text.append(f"~{input_tokens:,} in / ~{output_tokens:,} out ", style="blue")
+                        final_text.append(f"({elapsed:.1f}s)", style="green")
+                        live.update(final_text)
+                else:
+                    # Non-interactive mode - just make the call without spinner
+                    response = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=self.messages,
+                        tools=tools
+                    )
+                    message = response.choices[0].message
                 
                 message = response.choices[0].message
                 
@@ -302,52 +420,66 @@ When a user needs help with a task that matches a skill's description, mention t
                         function_name = tool_call.function.name
                         function_args = json.loads(tool_call.function.arguments)
                         
-                        # The function name is just the script name
-                        # We know which skill is active
-                        if active_skill:
-                            script_name = function_name
+                        # Check if this is a skill activation request
+                        if function_name == "activate_skill":
+                            skill_name = function_args.get("skill_name")
                             
-                            # Execute the script
-                            result = self.skill_loader.execute_skill_script(
-                                active_skill,
-                                script_name,
-                                function_args.get("params", {})
-                            )
+                            console.print(f"[cyan]→[/cyan] Activating skill: [bold]{skill_name}[/bold]")
                             
-                            # Add tool response to messages
-                            self.messages.append({
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "content": json.dumps(result)
-                            })
+                            if skill_name in self.skill_loader.skills:
+                                # Activate the skill
+                                skill_content = self.skill_loader.activate_skill(skill_name)
+                                active_skill = skill_name
+                                active_tools = self.skill_loader.get_skill_tools(skill_name)
+                                
+                                console.print(f"[green]✓[/green] Skill activated: [bold]{skill_name}[/bold]")
+                                
+                                # Add tool response confirming activation
+                                activation_msg = f"Skill '{skill_name}' activated successfully.\n\nFull skill instructions:\n{skill_content}\n\nYou now have access to tools from this skill."
+                                self.messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "content": activation_msg
+                                })
+                            else:
+                                # Skill not found
+                                console.print(f"[red]✗[/red] Skill not found: [bold]{skill_name}[/bold]")
+                                self.messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "content": f"Error: Skill '{skill_name}' not found."
+                                })
+                        else:
+                            # This is a skill script execution
+                            if active_skill:
+                                script_name = function_name
+                                
+                                console.print(f"[cyan]→[/cyan] Executing script: [bold]{script_name}[/bold] from skill [bold]{active_skill}[/bold]")
+                                
+                                # Execute the script
+                                result = self.skill_loader.execute_skill_script(
+                                    active_skill,
+                                    script_name,
+                                    function_args.get("params", {})
+                                )
+                                
+                                if "error" in result:
+                                    console.print(f"[red]✗[/red] Script execution failed: {result['error']}")
+                                else:
+                                    console.print(f"[green]✓[/green] Script executed: [bold]{script_name}[/bold]")
+                                
+                                # Add tool response to messages
+                                self.messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "content": json.dumps(result)
+                                })
                     
-                    # After tool execution, clear tools and continue to get final response
-                    active_tools = []
+                    # Continue to next iteration
                     continue
                 
-                # Check if we need to activate a skill
-                if not active_skill and message.content:
-                    # Check if message mentions a skill
-                    for skill_name in self.skill_loader.skills.keys():
-                        if skill_name.lower() in message.content.lower():
-                            # Activate this skill
-                            skill_content = self.skill_loader.activate_skill(skill_name)
-                            active_skill = skill_name
-                            active_tools = self.skill_loader.get_skill_tools(skill_name)
-                            
-                            # Add skill activation to context
-                            skill_message = f"Activating skill '{skill_name}'.\n\nFull skill instructions:\n{skill_content}\n\nYou now have access to the following tools from this skill. Use them to complete the user's request."
-                            self.messages.append({"role": "assistant", "content": message.content})
-                            self.messages.append({"role": "user", "content": skill_message})
-                            
-                            # Continue to next iteration with tools available
-                            break
-                    else:
-                        # No skill needed, return response
-                        return message.content
-                else:
-                    # Return final response
-                    return message.content if message.content else "I've completed the task."
+                # No tool calls - return the response
+                return message.content if message.content else "I've completed the task."
                     
             except Exception as e:
                 print(f"Error calling LLM: {e}")

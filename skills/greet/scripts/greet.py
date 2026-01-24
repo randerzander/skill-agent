@@ -17,9 +17,9 @@ def execute(params):
     """
     name = params.get("name")
     
-    # Get current date and time
-    now = datetime.now()
-    current_time = now.strftime("%A, %B %d, %Y at %I:%M %p")
+    # Get current date and time in UTC
+    now = datetime.utcnow()
+    current_time = now.strftime("%A, %B %d, %Y at %I:%M %p UTC")
     
     if name:
         greeting = f"Hello, {name}! It's wonderful to meet you. Today is {current_time}. How can I help you today?"

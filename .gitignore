@@ -32,3 +32,5 @@ wheels/
 *.swp
 *.swo
 *~
+logs/
+scratch/

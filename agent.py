@@ -11,6 +11,7 @@ import re
 import importlib.util
 import traceback
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from openai import OpenAI
@@ -27,12 +28,20 @@ load_dotenv()
 # Initialize Rich console
 console = Console()
 
+# Setup directories
+LOGS_DIR = Path("logs")
+LOGS_DIR.mkdir(exist_ok=True)
+
+SCRATCH_DIR = Path("scratch")
+SCRATCH_DIR.mkdir(exist_ok=True)
+
 class SkillLoader:
     """Loads and manages agent skills following the Agent Skills specification"""
     
-    def __init__(self, skills_dir: str = "skills"):
+    def __init__(self, skills_dir: str = "skills", enabled_skills: List[str] = None):
         self.skills_dir = Path(skills_dir)
         self.skills = {}
+        self.enabled_skills = enabled_skills  # Whitelist of enabled skills
         self.load_skills()
     
     def parse_skill_md(self, skill_md_path: Path) -> Dict[str, Any]:
@@ -75,6 +84,10 @@ class SkillLoader:
                     try:
                         skill_data = self.parse_skill_md(skill_md_file)
                         skill_name = skill_data['name']
+                        
+                        # Check if skill is enabled (if whitelist exists)
+                        if self.enabled_skills and skill_name not in self.enabled_skills:
+                            continue
                         
                         # Store only metadata for progressive disclosure
                         self.skills[skill_name] = {
@@ -155,32 +168,69 @@ class SkillLoader:
         scripts = self.get_skill_scripts(skill_name)
         tools = []
         
+        # Get skill metadata which contains parameters
+        skill = self.skills.get(skill_name)
+        if not skill:
+            return tools
+        
+        # Load full skill data to get frontmatter
+        skill_md_path = Path(skill['skill_md_path'])
+        skill_data = self.parse_skill_md(skill_md_path)
+        parameters_spec = skill_data['frontmatter'].get('parameters', {})
+        
         for script in scripts:
-            # Create a tool definition for each script
-            # Use just the script name as the tool name
+            # Get parameters for this specific script
+            script_params = parameters_spec.get(script['name'], {})
+            
+            # Convert SKILL.md parameter format to OpenAI tool format
+            tool_params = self._convert_parameters_to_tool_spec(script_params)
+            
             tool = {
                 "type": "function",
                 "function": {
                     "name": script['name'],
-                    "description": f"Execute the {script['name']} script from the {skill_name} skill",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "params": {
-                                "type": "object",
-                                "description": "Parameters to pass to the script as JSON",
-                                "additionalProperties": True
-                            }
-                        },
-                        "required": []
-                    }
+                    "description": skill_data.get('description', f"Execute the {script['name']} script"),
+                    "parameters": tool_params
                 }
             }
             tools.append(tool)
         
         return tools
     
-    def execute_skill_script(self, skill_name: str, script_name: str, parameters: Dict[str, Any] = None) -> Dict[str, Any]:
+    def _convert_parameters_to_tool_spec(self, params_def: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert SKILL.md parameters format to OpenAI tool parameters format"""
+        if not params_def:
+            # No parameters defined - return generic object
+            return {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        
+        properties = {}
+        required = []
+        
+        for param_name, param_config in params_def.items():
+            prop = {
+                "type": param_config.get("type", "string"),
+                "description": param_config.get("description", "")
+            }
+            
+            if "default" in param_config:
+                prop["default"] = param_config["default"]
+            
+            properties[param_name] = prop
+            
+            if param_config.get("required", False):
+                required.append(param_name)
+        
+        return {
+            "type": "object",
+            "properties": properties,
+            "required": required
+        }
+    
+    def execute_skill_script(self, skill_name: str, script_name: str, parameters: Dict[str, Any] = None, live_display = None) -> Dict[str, Any]:
         """Execute a specific skill script with given parameters"""
         if skill_name not in self.skills:
             return {"error": f"Skill '{skill_name}' not found"}
@@ -224,36 +274,73 @@ class SkillLoader:
 class AgentSkillsFramework:
     """Main framework for agent skills execution"""
     
-    def __init__(self, api_key: str = None):
+    def _load_config(self, config_path: str) -> Dict[str, Any]:
+        """Load configuration from YAML file"""
+        config_file = Path(config_path)
+        if not config_file.exists():
+            console.print(f"[yellow]Warning: Config file {config_path} not found, using defaults[/yellow]")
+            return {}
+        
+        try:
+            with open(config_file, 'r') as f:
+                config = yaml.safe_load(f)
+                return config or {}
+        except Exception as e:
+            console.print(f"[red]Error loading config: {e}[/red]")
+            return {}
+    
+    def __init__(self, api_key: str = None, config_path: str = "config.yaml"):
+        # Load configuration
+        config = self._load_config(config_path)
+        
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
         if not self.api_key:
             raise ValueError("OpenRouter API key not found. Set OPENROUTER_API_KEY environment variable.")
         
-        # Initialize OpenAI client with OpenRouter configuration
+        # Initialize OpenAI client with config
+        openai_config = config.get('openai', {})
         self.client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
+            base_url=openai_config.get('base_url', 'https://openrouter.ai/api/v1'),
             api_key=self.api_key
         )
         
-        # Model configuration
-        self.model = "nvidia/nemotron-3-nano-30b-a3b:free"
+        # Model configuration from config
+        self.model = openai_config.get('model', 'nvidia/nemotron-3-nano-30b-a3b:free')
         
-        # Initialize skill loader
-        self.skill_loader = SkillLoader()
+        # Initialize skill loader with enabled skills filter
+        skills_config = config.get('skills', {})
+        enabled_skills = skills_config.get('enabled', None)  # None = all enabled
+        self.skill_loader = SkillLoader(enabled_skills=enabled_skills)
         
-        # Conversation history - start with system message
-        skills_xml = self.skill_loader.get_skills_xml()
-        system_message = f"""You are a helpful AI assistant with access to skills.
+        # Setup conversation log file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.log_file = LOGS_DIR / f"conversation_{timestamp}.jsonl"
+        
+        # Conversation history - start with simple system message
+        # Get system message from config or use default
+        system_message = config.get('system_message', """You are a helpful AI assistant with access to various skills.
 
-{skills_xml}
-
-When a user needs help with a task that matches a skill's description, you can activate that skill by using the activate_skill function. Once activated, you'll have access to tools to execute it.
-
-If the user is just asking about available skills or general questions, answer normally without activating any skills."""
+Activate available skills to complete tasks. After each skill, consider whether you need to activate another skill to complete the user's request.""")
         
         self.messages = [{"role": "system", "content": system_message}]
         
-        # Define the activate_skill tool
+        # Create tool definitions for each skill (discovery phase)
+        self.skill_discovery_tools = []
+        for skill_name, skill in self.skill_loader.skills.items():
+            self.skill_discovery_tools.append({
+                "type": "function",
+                "function": {
+                    "name": f"activate_{skill_name}",
+                    "description": skill['description'],
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
+                }
+            })
+        
+        # Keep the old activate_skill tool as fallback (shouldn't be needed)
         self.activate_skill_tool = {
             "type": "function",
             "function": {
@@ -287,6 +374,19 @@ If the user is just asking about available skills or general questions, answer n
         """Estimate token count from text length"""
         return int(len(text) / 4.5)
     
+    def _log_message(self, entry: Dict[str, Any]):
+        """Log a message to the conversation log file"""
+        try:
+            with open(self.log_file, 'a') as f:
+                log_entry = {
+                    "timestamp": datetime.now().isoformat(),
+                    **entry
+                }
+                f.write(json.dumps(log_entry) + "\n")
+        except Exception as e:
+            # Don't fail on logging errors
+            console.print(f"[dim red]Warning: Failed to log: {e}[/dim red]")
+    
     def run(self, user_input: str, max_iterations: int = 10) -> str:
         """
         Main agent loop that processes user input through skill selection and execution
@@ -298,8 +398,19 @@ If the user is just asking about available skills or general questions, answer n
         Returns:
             The final response from the agent
         """
+        # Write user query to scratch directory for skills to access
+        user_query_file = SCRATCH_DIR / "user_query.txt"
+        with open(user_query_file, 'w') as f:
+            f.write(user_input)
+        
         # Add user message to history
         self.messages.append({"role": "user", "content": user_input})
+        
+        # Log user input
+        self._log_message({
+            "type": "user_input",
+            "content": user_input
+        })
         
         # Track active skill and its tools
         active_skill = None
@@ -315,7 +426,7 @@ If the user is just asking about available skills or general questions, answer n
             if active_skill:
                 tools = active_tools
             else:
-                tools = [self.activate_skill_tool]
+                tools = self.skill_discovery_tools
             
             # Get LLM response with tools
             try:
@@ -396,6 +507,21 @@ If the user is just asking about available skills or general questions, answer n
                 
                 message = response.choices[0].message
                 
+                # Log LLM response
+                self._log_message({
+                    "type": "llm_response",
+                    "iteration": iteration,
+                    "model": self.model,
+                    "content": message.content,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "function": tc.function.name,
+                            "arguments": json.loads(tc.function.arguments)
+                        } for tc in (message.tool_calls or [])
+                    ] if message.tool_calls else None
+                })
+                
                 # Check if LLM wants to call a tool
                 if message.tool_calls:
                     # Add assistant message with tool calls to history
@@ -420,11 +546,9 @@ If the user is just asking about available skills or general questions, answer n
                         function_name = tool_call.function.name
                         function_args = json.loads(tool_call.function.arguments)
                         
-                        # Check if this is a skill activation request
-                        if function_name == "activate_skill":
-                            skill_name = function_args.get("skill_name")
-                            
-                            console.print(f"[cyan]→[/cyan] Activating skill: [bold]{skill_name}[/bold]")
+                        # Check if this is a skill activation request (new format: activate_SKILLNAME)
+                        if function_name.startswith("activate_"):
+                            skill_name = function_name.replace("activate_", "")
                             
                             if skill_name in self.skill_loader.skills:
                                 # Activate the skill
@@ -432,10 +556,13 @@ If the user is just asking about available skills or general questions, answer n
                                 active_skill = skill_name
                                 active_tools = self.skill_loader.get_skill_tools(skill_name)
                                 
-                                console.print(f"[green]✓[/green] Skill activated: [bold]{skill_name}[/bold]")
+                                # Calculate approximate token count (rough estimate: ~4 chars per token)
+                                token_estimate = len(skill_content) // 4
+                                
+                                console.print(f"[green]✓[/green] Skill activated: [bold]{skill_name}[/bold] [dim](~{token_estimate} tokens added)[/dim]")
                                 
                                 # Add tool response confirming activation
-                                activation_msg = f"Skill '{skill_name}' activated successfully.\n\nFull skill instructions:\n{skill_content}\n\nYou now have access to tools from this skill."
+                                activation_msg = f"Skill '{skill_name}' activated.\n\nInstructions:\n{skill_content}\n\nYou can access tools from this skill."
                                 self.messages.append({
                                     "role": "tool",
                                     "tool_call_id": tool_call.id,
@@ -453,20 +580,56 @@ If the user is just asking about available skills or general questions, answer n
                             # This is a skill script execution
                             if active_skill:
                                 script_name = function_name
+                                # Parameters are now passed directly (not wrapped in 'params')
+                                params = function_args
                                 
-                                console.print(f"[cyan]→[/cyan] Executing script: [bold]{script_name}[/bold] from skill [bold]{active_skill}[/bold]")
+                                # Create a status line that will be updated
+                                status_text = Text()
+                                status_text.append("⠋ ", style="cyan")
+                                status_text.append(f"Executing {active_skill}.{script_name}", style="bold")
                                 
-                                # Execute the script
-                                result = self.skill_loader.execute_skill_script(
-                                    active_skill,
-                                    script_name,
-                                    function_args.get("params", {})
-                                )
+                                # Show params preview (truncated)
+                                params_str = str(params)
+                                if len(params_str) > 60:
+                                    params_str = params_str[:57] + "..."
+                                status_text.append(f" {params_str}", style="dim")
                                 
-                                if "error" in result:
-                                    console.print(f"[red]✗[/red] Script execution failed: {result['error']}")
-                                else:
-                                    console.print(f"[green]✓[/green] Script executed: [bold]{script_name}[/bold]")
+                                with Live(status_text, console=console, refresh_per_second=10) as live:
+                                    # Execute the script
+                                    result = self.skill_loader.execute_skill_script(
+                                        active_skill,
+                                        script_name,
+                                        params,
+                                        live  # Pass live display for updates
+                                    )
+                                    
+                                    # Log tool execution
+                                    self._log_message({
+                                        "type": "tool_execution",
+                                        "skill": active_skill,
+                                        "script": script_name,
+                                        "params": params,
+                                        "result": result
+                                    })
+                                    
+                                    # Update with final status
+                                    if "error" in result:
+                                        final_text = Text()
+                                        final_text.append("✗ ", style="red")
+                                        final_text.append(f"{active_skill}.{script_name}", style="bold")
+                                        final_text.append(f": {result['error'][:100]}", style="red dim")
+                                        live.update(final_text)
+                                    else:
+                                        final_text = Text()
+                                        final_text.append("✓ ", style="green")
+                                        final_text.append(f"{active_skill}.{script_name}", style="bold")
+                                        
+                                        # Add result size if available
+                                        if "result" in result:
+                                            result_len = len(str(result["result"]))
+                                            final_text.append(f" ({result_len:,} chars)", style="dim")
+                                        
+                                        live.update(final_text)
                                 
                                 # Add tool response to messages
                                 self.messages.append({
@@ -479,7 +642,15 @@ If the user is just asking about available skills or general questions, answer n
                     continue
                 
                 # No tool calls - return the response
-                return message.content if message.content else "I've completed the task."
+                final_response = message.content if message.content else "I've completed the task."
+                
+                # Log final response
+                self._log_message({
+                    "type": "final_response",
+                    "content": final_response
+                })
+                
+                return final_response
                     
             except Exception as e:
                 print(f"Error calling LLM: {e}")
@@ -514,6 +685,11 @@ def main():
             if user_input.lower() in ['exit', 'quit', 'q']:
                 print("Goodbye!")
                 break
+            
+            if user_input.lower() == 'clear':
+                agent.messages = []
+                console.print("[green]✓[/green] Chat history cleared")
+                continue
             
             response = agent.run(user_input)
             print(f"\nAgent: {response}")

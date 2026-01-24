@@ -4,4 +4,10 @@ pyyaml>=6.0.0
 requests>=2.31.0
 html2text>=2024.2.26
 readability-lxml>=0.8.0
+rich>=13.0.0
+wikipedia-api>=0.7.1
+youtube-transcript-api>=0.6.0
+pypdfium2>=4.0.0
+sentence-transformers>=2.0.0
+lancedb>=0.5.0
 pysearx @ git+https://github.com/randerzander/pysearx.git

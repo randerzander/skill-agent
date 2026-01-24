@@ -50,6 +50,8 @@
             display: grid;
             grid-template-columns: 2fr 1fr;
             gap: 20px;
+            width: 100%;
+            overflow-x: hidden;
         }
         
         .left-panel {
@@ -62,6 +64,8 @@
             display: flex;
             flex-direction: column;
             gap: 20px;
+            min-width: 0;
+            overflow-x: hidden;
         }
         
         .card {
@@ -70,6 +74,8 @@
             padding: 20px;
             box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4), 0 0 20px rgba(255, 140, 0, 0.1);
             border: 1px solid rgba(255, 140, 0, 0.15);
+            min-width: 0;
+            overflow-x: hidden;
         }
         
         .card-title {
@@ -203,6 +209,8 @@
             display: flex;
             flex-direction: column;
             gap: 8px;
+            max-height: 400px;
+            overflow-y: auto;
         }
         
         .skill-item {
@@ -211,6 +219,8 @@
             border-radius: 6px;
             border-left: 3px solid #ff8c00;
             box-shadow: 0 2px 8px rgba(255, 140, 0, 0.1);
+            overflow-wrap: break-word;
+            word-wrap: break-word;
         }
         
         .skill-name {
@@ -228,6 +238,8 @@
             display: flex;
             flex-direction: column;
             gap: 8px;
+            max-height: 400px;
+            overflow-y: auto;
         }
         
         .tool-item {
@@ -236,6 +248,8 @@
             border-radius: 6px;
             border-left: 3px solid #ff6b00;
             box-shadow: 0 2px 8px rgba(255, 107, 0, 0.1);
+            overflow-wrap: break-word;
+            word-wrap: break-word;
         }
         
         .tool-name {

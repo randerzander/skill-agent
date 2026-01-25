@@ -85,9 +85,12 @@ class SkillLoader:
                         skill_data = self.parse_skill_md(skill_md_file)
                         skill_name = skill_data['name']
                         
+                        # Always load verify skill for automatic link checking
                         # Check if skill is enabled (if whitelist exists)
                         if self.enabled_skills and skill_name not in self.enabled_skills:
-                            continue
+                            # Allow verify to load even if not in enabled list
+                            if skill_name != 'verify':
+                                continue
                         
                         # Store only metadata for progressive disclosure
                         self.skills[skill_name] = {
@@ -123,6 +126,66 @@ class SkillLoader:
             xml_parts.append(f"  </skill>")
         xml_parts.append("</available_skills>")
         return "\n".join(xml_parts)
+    
+    def _auto_verify_links(self, response: str, live=None) -> tuple[str, bool]:
+        """
+        Automatically verify links in response if verify skill is available
+        
+        Returns:
+            tuple: (verified_response, should_retry)
+                - verified_response: Response with invalid links removed
+                - should_retry: True if agent should try again with better sources
+        """
+        # Check if verify skill exists
+        if 'verify' not in self.skills:
+            return response, False
+        
+        try:
+            # Import verify_links script
+            verify_script_path = Path(self.skills['verify']['skill_md_path']).parent / 'scripts' / 'verify_links.py'
+            if not verify_script_path.exists():
+                return response, False
+            
+            # Load and execute verify_links
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("verify_links", verify_script_path)
+            verify_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(verify_module)
+            
+            # Call verify_links with spinner if available
+            if live:
+                with live.console.status("[cyan]⚙ Verifying links...[/cyan]", spinner="dots") as status:
+                    result = verify_module.execute({"response_text": response})
+            else:
+                result = verify_module.execute({"response_text": response})
+            
+            if "error" in result:
+                # If verification fails, just return original response
+                return response, False
+            
+            verification_data = result.get("result", {})
+            verify_status = verification_data.get("status")
+            
+            if verify_status == "invalid_links_found":
+                # Log verification warning
+                console.print("\n[yellow]⚠ Link verification detected invalid URLs[/yellow]")
+                console.print(f"[dim]Invalid: {verification_data.get('invalid_urls', 0)}/{verification_data.get('total_urls', 0)} URLs[/dim]")
+                console.print("[dim]Asking agent to retry with valid sources...[/dim]")
+                
+                # Return modified response and signal to retry
+                should_retry = verification_data.get("should_research_again", False)
+                return verification_data.get("modified_response", response), should_retry
+            elif verify_status == "all_valid":
+                console.print(f"[green]✓ All {verification_data.get('total_urls', 0)} links verified[/green]")
+                return response, False
+            else:
+                # No links or other status - return original
+                return response, False
+                
+        except Exception as e:
+            # If verification fails for any reason, just return original response
+            console.print(f"[dim]Note: Link verification skipped ({str(e)})[/dim]")
+            return response, False
     
     def activate_skill(self, skill_name: str) -> Optional[str]:
         """Activate a skill by loading its full SKILL.md content"""
@@ -328,8 +391,12 @@ Activate available skills to complete tasks. After each skill, consider whether 
         self.messages = [{"role": "system", "content": system_message}]
         
         # Create tool definitions for each skill (discovery phase)
+        # Exclude verify skill from discovery - it runs automatically
         self.skill_discovery_tools = []
         for skill_name, skill in self.skill_loader.skills.items():
+            if skill_name == 'verify':
+                continue  # Don't expose verify to agent
+            
             self.skill_discovery_tools.append({
                 "type": "function",
                 "function": {
@@ -401,7 +468,7 @@ Activate available skills to complete tasks. After each skill, consider whether 
             # Don't fail on logging errors
             console.print(f"[dim red]Warning: Failed to log: {e}[/dim red]")
     
-    def run(self, user_input: str, max_iterations: int = 10) -> str:
+    def run(self, user_input: str, max_iterations: int = 15) -> str:
         """
         Main agent loop that processes user input through skill selection and execution
         
@@ -653,10 +720,16 @@ Activate available skills to complete tasks. After each skill, consider whether 
                                         final_text.append("✓ ", style="green")
                                         final_text.append(f"{active_skill}.{script_name}", style="bold")
                                         
+                                        # Show params
+                                        params_str = str(params)
+                                        if len(params_str) > 60:
+                                            params_str = params_str[:57] + "..."
+                                        final_text.append(f" {params_str}", style="dim")
+                                        
                                         # Add result size if available
                                         if "result" in result:
                                             result_len = len(str(result["result"]))
-                                            final_text.append(f" ({result_len:,} chars)", style="dim")
+                                            final_text.append(f" → {result_len:,} chars", style="dim")
                                         
                                         live.update(final_text)
                                 
@@ -673,19 +746,49 @@ Activate available skills to complete tasks. After each skill, consider whether 
                 # No tool calls - return the response
                 final_response = message.content if message.content else "I've completed the task."
                 
+                # Automatically verify links in final response
+                verified_response, should_retry = self.skill_loader._auto_verify_links(final_response, live=live)
+                
+                if should_retry:
+                    # Add verification feedback as a system message
+                    self.messages.append({
+                        "role": "user",
+                        "content": "Your previous response contained invalid or inaccessible links. Please use the web tool to find valid sources and provide an updated answer with working links."
+                    })
+                    # Continue loop to let agent try again
+                    continue
+                
                 # Log final response
                 self._log_message({
                     "type": "final_response",
-                    "content": final_response
+                    "content": verified_response
                 })
                 
-                return final_response
+                return verified_response
                     
             except Exception as e:
                 print(f"Error calling LLM: {e}")
                 return f"Error: {str(e)}"
         
-        return "Maximum iterations reached. Unable to complete the request."
+        # Max iterations reached - extract best response from history
+        final_response = "Maximum iterations reached. Unable to complete the request."
+        
+        # Try to find the last assistant message with content
+        for msg in reversed(self.messages):
+            if msg.get("role") == "assistant" and msg.get("content"):
+                final_response = msg["content"]
+                break
+        
+        # Verify links in the response if enabled
+        verified_response, _ = self.skill_loader._auto_verify_links(final_response)
+        
+        # Log final response
+        self._log_message({
+            "type": "final_response",
+            "content": verified_response
+        })
+        
+        return verified_response
 
 
 def main():

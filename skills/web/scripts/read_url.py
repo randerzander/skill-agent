@@ -18,6 +18,45 @@ import re
 from pathlib import Path
 
 
+def _sanitize_filename(name):
+    """Sanitize a string for use as a filename"""
+    # Replace problematic characters with underscores
+    name = re.sub(r'[^\w\s-]', '_', name)
+    # Replace whitespace with underscores
+    name = re.sub(r'\s+', '_', name)
+    # Limit length
+    return name[:100]
+
+
+def _save_to_scratch(url, title, content):
+    """Save content to scratch directory as JSONL"""
+    try:
+        scratch_dir = Path("scratch")
+        scratch_dir.mkdir(exist_ok=True)
+        
+        # Use title or URL path as filename
+        if title:
+            filename = _sanitize_filename(title)
+        else:
+            parsed = urlparse(url)
+            filename = _sanitize_filename(parsed.path.replace('/', '_') or 'content')
+        
+        filepath = scratch_dir / f"url_{filename}.jsonl"
+        
+        # Write as JSONL with url, title, and content
+        with open(filepath, 'w') as f:
+            data = {
+                'url': url,
+                'title': title,
+                'content': content,
+                'timestamp': time.time()
+            }
+            f.write(json.dumps(data) + '\n')
+    except Exception as e:
+        # Don't fail if saving fails, just log
+        print(f"Warning: Failed to save to scratch: {e}")
+
+
 # Load config for retrieval settings
 def _load_config():
     """Load configuration"""
@@ -171,6 +210,23 @@ def _get_pdf_content(url):
         response = requests.get(url, timeout=30, headers=headers)
         response.raise_for_status()
         
+        # Save raw PDF to scratch
+        try:
+            scratch_dir = Path("scratch")
+            scratch_dir.mkdir(exist_ok=True)
+            
+            # Extract filename from URL or use generic name
+            parsed = urlparse(url)
+            pdf_filename = _sanitize_filename(parsed.path.split('/')[-1] or 'document')
+            if not pdf_filename.endswith('.pdf'):
+                pdf_filename += '.pdf'
+            
+            pdf_path = scratch_dir / f"pdf_{pdf_filename}"
+            with open(pdf_path, 'wb') as f:
+                f.write(response.content)
+        except Exception as e:
+            print(f"Warning: Failed to save PDF to scratch: {e}")
+        
         # Load PDF from bytes
         pdf = pdfium.PdfDocument(io.BytesIO(response.content))
         
@@ -191,8 +247,7 @@ def _get_pdf_content(url):
         if not full_text.strip():
             return {"error": "PDF contains no extractable text"}
         
-        return {
-            "result": f"""# PDF Document
+        content = f"""# PDF Document
 
 **URL:** {url}
 **Pages:** {len(text_parts)}
@@ -200,11 +255,15 @@ def _get_pdf_content(url):
 ## Content
 
 {full_text}"""
-        }
+        
+        # Save extracted text to scratch
+        pdf_title = pdf_filename.replace('.pdf', '')
+        _save_to_scratch(url, pdf_title, content)
+        
+        return {"result": content}
         
     except Exception as e:
         return {"error": f"Failed to extract PDF content: {str(e)}"}
-
 
 def _is_youtube_url(url):
     """Check if URL is a YouTube URL"""
@@ -250,8 +309,7 @@ def _get_youtube_transcript(url):
         # Combine all transcript snippets
         transcript = "\n".join([snippet.text for snippet in fetched_transcript.snippets])
         
-        return {
-            "result": f"""# YouTube Video Transcript
+        full_content = f"""# YouTube Video Transcript
 
 **Video ID:** {video_id}
 **URL:** {url}
@@ -261,7 +319,11 @@ def _get_youtube_transcript(url):
 ## Transcript
 
 {transcript}"""
-        }
+        
+        # Save to scratch
+        _save_to_scratch(url, f"YouTube_{video_id}", full_content)
+        
+        return {"result": full_content}
         
     except Exception as e:
         return {"error": f"Failed to fetch YouTube transcript: {str(e)}"}
@@ -324,6 +386,9 @@ def _get_wikipedia_content(url):
         if page.categories:
             cats = [cat.replace('Category:', '') for cat in list(page.categories.keys())[:10]]
             content += f"**Categories:** {', '.join(cats)}\n\n"
+        
+        # Save to scratch
+        _save_to_scratch(url, page.title, content)
         
         return {"result": content}
         
@@ -456,6 +521,9 @@ def execute(params):
                 filtered_content += f"**Retrieved:** {len(relevant_chunks)} most relevant chunks out of {num_chunks} total chunks\n"
                 filtered_content += f"**Timings:** Chunking: {timings['chunking']:.2f}s, Embedding: {timings['embedding']:.2f}s, Writing: {timings['writing_to_lancedb']:.2f}s, Retrieval: {timings['retrieval']:.2f}s, Total: {timings['total']:.2f}s\n"
                 
+                # Save to scratch
+                _save_to_scratch(url, title, markdown_content)
+                
                 return {
                     "result": filtered_content,
                     "_metadata": {
@@ -470,6 +538,7 @@ def execute(params):
                 }
             except Exception as e:
                 # Fall back to returning full content if retrieval fails
+                _save_to_scratch(url, title, markdown_content)
                 return {
                     "result": markdown_content,
                     "_metadata": {
@@ -478,7 +547,8 @@ def execute(params):
                     }
                 }
         
-        # Return full content if retrieval is disabled or no query provided
+        # Save to scratch and return full content if retrieval is disabled or no query provided
+        _save_to_scratch(url, title, markdown_content)
         return {"result": markdown_content}
         
     except requests.exceptions.RequestException as e:

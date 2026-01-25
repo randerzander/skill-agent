@@ -37,6 +37,14 @@ agent_state = {
 state_lock = threading.Lock()
 
 
+def get_client_ip():
+    """Get the real client IP address from X-Forwarded-For header or remote_addr"""
+    if request.headers.get('X-Forwarded-For'):
+        # X-Forwarded-For can contain multiple IPs, use the first one (original client)
+        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
+    return request.remote_addr
+
+
 def init_agent():
     """Initialize the agent framework"""
     global agent
@@ -143,7 +151,7 @@ class WebAgentWrapper:
         
         # Use the agent's run method which has all the correct logic
         try:
-            response = self.agent.run(user_input, max_iterations=10)
+            response = self.agent.run(user_input, max_iterations=15)
             
             # Don't manually add final_response - agent's _log_message handles it
             
@@ -184,6 +192,9 @@ def run_agent():
     user_input = request.json.get('input', '').strip()
     if not user_input:
         return jsonify({'error': 'No input provided'}), 400
+    
+    client_ip = get_client_ip()
+    print(f"[{client_ip}] User query: {user_input}")
     
     with state_lock:
         if agent_state['running']:

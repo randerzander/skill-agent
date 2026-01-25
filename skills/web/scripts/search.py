@@ -3,7 +3,21 @@
 Web search script
 Searches the web using pysearx across multiple search engines
 """
+import json
+import os
+import re
+from pathlib import Path
 from pysearx import search
+
+
+def sanitize_filename(name):
+    """Sanitize a string for use as a filename"""
+    # Replace problematic characters with underscores
+    name = re.sub(r'[^\w\s-]', '_', name)
+    # Replace whitespace with underscores
+    name = re.sub(r'\s+', '_', name)
+    # Limit length
+    return name[:100]
 
 
 def execute(params):
@@ -40,6 +54,18 @@ def execute(params):
             return {
                 "error": "No results found. The search service may be rate limited or temporarily unavailable."
             }
+        
+        # Save results to scratch directory
+        scratch_dir = Path("scratch")
+        scratch_dir.mkdir(exist_ok=True)
+        
+        filename = sanitize_filename(query)
+        filepath = scratch_dir / f"query_{filename}.jsonl"
+        
+        # Write results as JSONL (one JSON object per line)
+        with open(filepath, 'w') as f:
+            for result in results:
+                f.write(json.dumps(result) + '\n')
         
         return {"result": results}
         

@@ -25,6 +25,10 @@ system_message: |
 
   When returning a final answer, cite sources (with hyperlinks) used in your response.
 
+# Agent Configuration
+agent:
+  max_iterations: 15
+
 # Skills Configuration
 skills:
   # Whitelist of enabled skills (empty list = all skills enabled)

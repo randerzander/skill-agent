@@ -139,6 +139,33 @@
             box-shadow: none;
         }
         
+        .result-section {
+            background: linear-gradient(135deg, rgba(0, 255, 136, 0.05) 0%, rgba(255, 140, 0, 0.05) 100%);
+            border: 2px solid rgba(0, 255, 136, 0.3);
+            box-shadow: 0 8px 24px rgba(0, 255, 136, 0.2);
+        }
+        
+        .result-content {
+            padding: 20px;
+            font-size: 16px;
+            line-height: 1.8;
+            color: #e8eaf0;
+            background: rgba(10, 14, 39, 0.4);
+            border-radius: 8px;
+            border-left: 4px solid #00ff88;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        
+        .result-content strong {
+            color: #00ff88;
+        }
+        
+        .result-content em {
+            color: #ffa500;
+            font-style: italic;
+        }
+        
         .logs-section {
             flex: 1;
             min-height: 400px;
@@ -472,6 +499,12 @@
                     </form>
                 </div>
                 
+                <div class="card result-section" id="resultSection" style="display: none;">
+                    <h2 class="card-title">✨ Result</h2>
+                    <div id="resultContent" class="result-content">
+                    </div>
+                </div>
+                
                 <div class="card logs-section">
                     <h2 class="card-title">📋 Execution Log</h2>
                     <div id="logs">
@@ -554,6 +587,9 @@
             
             // Clear tools list
             document.getElementById('toolsList').innerHTML = '<div class="empty-state">No tools called yet</div>';
+            
+            // Hide result section from previous run
+            document.getElementById('resultSection').style.display = 'none';
             
             startTime = Date.now();
             
@@ -667,7 +703,8 @@
                     break;
                     
                 case 'final_response':
-                    addLog('complete', `✅ Complete: ${event.data.content}`, event.timestamp, elapsed);
+                    // Don't add to execution log, show in Result panel instead
+                    showResult(event.data.content);
                     break;
                     
                 case 'complete':
@@ -683,6 +720,20 @@
                     addLog('error', `⚠️ Maximum iterations reached`, event.timestamp, elapsed);
                     break;
             }
+        }
+        
+        function showResult(content) {
+            const resultSection = document.getElementById('resultSection');
+            const resultContent = document.getElementById('resultContent');
+            
+            // Show the result section
+            resultSection.style.display = 'block';
+            
+            // Set the content
+            resultContent.textContent = content;
+            
+            // Scroll into view
+            resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
         
         function addLog(type, message, timestamp, elapsed, spinner = false) {

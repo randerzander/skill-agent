@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 # Target URLs
 PROXY_LIST_URL = "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt"
-TARGET_URL = "https://skill-agent.onrender.com"
+TARGET_URL = "https://skill-agent.onrender.com/health"
 TEST_URL = "https://www.google.com"
 
 # Task configuration

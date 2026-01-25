@@ -297,6 +297,16 @@ def get_tools_called():
         return jsonify({'tools': agent_state['tools_called']})
 
 
+@app.route('/health')
+def health():
+    """Health check endpoint for keepalive monitoring"""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'uptime': time.time() - agent_state.get('start_time', time.time()) if agent_state.get('start_time') else 0
+    }), 200
+
+
 if __name__ == '__main__':
     # Initialize agent on startup
     init_agent()

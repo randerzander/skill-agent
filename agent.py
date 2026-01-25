@@ -289,9 +289,12 @@ class AgentSkillsFramework:
             console.print(f"[red]Error loading config: {e}[/red]")
             return {}
     
-    def __init__(self, api_key: str = None, config_path: str = "config.yaml"):
+    def __init__(self, api_key: str = None, config_path: str = "config.yaml", event_callback=None):
         # Load configuration
         config = self._load_config(config_path)
+        
+        # Event callback for real-time updates (used by web UI)
+        self.event_callback = event_callback
         
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
         if not self.api_key:
@@ -375,14 +378,25 @@ Activate available skills to complete tasks. After each skill, consider whether 
         return int(len(text) / 4.5)
     
     def _log_message(self, entry: Dict[str, Any]):
-        """Log a message to the conversation log file"""
+        """Log a message to the conversation log file and call event callback"""
         try:
+            log_entry = {
+                "timestamp": datetime.now().isoformat(),
+                **entry
+            }
+            
+            # Write to log file
             with open(self.log_file, 'a') as f:
-                log_entry = {
-                    "timestamp": datetime.now().isoformat(),
-                    **entry
-                }
                 f.write(json.dumps(log_entry) + "\n")
+            
+            # Call event callback if registered (for web UI)
+            if self.event_callback:
+                try:
+                    self.event_callback(log_entry)
+                except Exception as cb_err:
+                    # Don't let callback errors break the agent
+                    pass
+                    
         except Exception as e:
             # Don't fail on logging errors
             console.print(f"[dim red]Warning: Failed to log: {e}[/dim red]")
@@ -561,6 +575,14 @@ Activate available skills to complete tasks. After each skill, consider whether 
                                 
                                 console.print(f"[green]✓[/green] Skill activated: [bold]{skill_name}[/bold] [dim](~{token_estimate} tokens added)[/dim]")
                                 
+                                # Log skill activation completion
+                                self._log_message({
+                                    "type": "skill_activated",
+                                    "skill_name": skill_name,
+                                    "tools_count": len(active_tools),
+                                    "tokens_added": token_estimate
+                                })
+                                
                                 # Add tool response confirming activation
                                 activation_msg = f"Skill '{skill_name}' activated.\n\nInstructions:\n{skill_content}\n\nYou can access tools from this skill."
                                 self.messages.append({
@@ -571,6 +593,13 @@ Activate available skills to complete tasks. After each skill, consider whether 
                             else:
                                 # Skill not found
                                 console.print(f"[red]✗[/red] Skill not found: [bold]{skill_name}[/bold]")
+                                
+                                # Log skill activation failure
+                                self._log_message({
+                                    "type": "skill_activation_failed",
+                                    "skill_name": skill_name
+                                })
+                                
                                 self.messages.append({
                                     "role": "tool",
                                     "tool_call_id": tool_call.id,

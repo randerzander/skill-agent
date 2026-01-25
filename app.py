@@ -6,10 +6,12 @@ import os
 import json
 import time
 import threading
+import queue
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from agent import AgentSkillsFramework, SkillLoader
 from dotenv import load_dotenv
+from keepalive import start_keepalive_thread
 
 # Load environment variables
 load_dotenv()
@@ -54,107 +56,102 @@ def init_agent():
 class WebAgentWrapper:
     """Wrapper around AgentSkillsFramework to capture execution events"""
     
-    def __init__(self, agent_framework):
+    def __init__(self, agent_framework, event_queue=None):
         self.agent = agent_framework
         self.events = []
         self.start_time = None
+        self.event_queue = event_queue  # Queue for real-time streaming
         
-    def add_event(self, event_type, data):
-        """Add an event to the events list"""
-        self.events.append({
+    def event_callback(self, log_entry):
+        """Callback for real-time events from the agent"""
+        elapsed = time.time() - self.start_time if self.start_time else 0
+        
+        # Convert agent log entries to web UI events
+        event_type = log_entry.get('type')
+        
+        if event_type == 'user_input':
+            self.add_event('user_message', {'content': log_entry.get('content')}, elapsed)
+        elif event_type == 'skill_activated':
+            # Skill activation completed successfully
+            self.add_event('skill_activated', {
+                'skill_name': log_entry.get('skill_name'),
+                'tools_count': log_entry.get('tools_count', 0)
+            }, elapsed)
+        elif event_type == 'skill_activation_failed':
+            # Skill activation failed
+            self.add_event('skill_activation_failed', {
+                'skill_name': log_entry.get('skill_name')
+            }, elapsed)
+        elif event_type == 'llm_response':
+            tool_calls = log_entry.get('tool_calls') or []
+            
+            # Check for skill activations and tool calls
+            for tc in tool_calls:
+                func_name = tc.get('function')
+                if func_name and func_name.startswith('activate_'):
+                    skill_name = func_name.replace('activate_', '')
+                    self.add_event('skill_activation', {'skill_name': skill_name}, elapsed)
+                elif func_name:
+                    self.add_event('tool_call', {
+                        'tool_name': func_name,
+                        'arguments': tc.get('arguments', {})
+                    }, elapsed)
+            
+            self.add_event('llm_response', {
+                'content': log_entry.get('content'),
+                'tool_calls': tool_calls
+            }, elapsed)
+        elif event_type == 'tool_execution':
+            # Tool execution result
+            result = log_entry.get('result', {})
+            is_error = 'error' in result
+            
+            self.add_event('tool_result', {
+                'tool_name': log_entry.get('script'),
+                'result': result,
+                'error': is_error
+            }, elapsed)
+        elif event_type == 'final_response':
+            self.add_event('final_response', {'content': log_entry.get('content')}, elapsed)
+        
+    def add_event(self, event_type, data, elapsed):
+        """Add an event to the events list and optionally to queue for streaming"""
+        event_timestamp = datetime.fromtimestamp(self.start_time + elapsed)
+        
+        event = {
             'type': event_type,
             'data': data,
-            'timestamp': datetime.now().isoformat(),
-            'elapsed': time.time() - self.start_time if self.start_time else 0
-        })
+            'timestamp': event_timestamp.isoformat(),
+            'elapsed': elapsed
+        }
+        
+        self.events.append(event)
+        
+        # If we have a queue, push event for real-time streaming
+        if self.event_queue is not None:
+            self.event_queue.put(event)
     
     def run(self, user_input):
         """Run the agent with event tracking - delegates to AgentSkillsFramework"""
         self.start_time = time.time()
         self.events = []
         
-        # Add user message event
-        self.add_event('user_message', {'content': user_input})
+        # Register callback with agent
+        self.agent.event_callback = self.event_callback
+        
+        # Don't manually add user_message - agent's _log_message will do it
         
         # Use the agent's run method which has all the correct logic
         try:
             response = self.agent.run(user_input, max_iterations=10)
             
-            # Extract events from the agent's conversation history
-            # Track tool calls to match with results
-            pending_tool_calls = {}
-            
-            for msg in self.agent.messages:
-                if msg.get('role') == 'assistant':
-                    tool_calls_data = []
-                    
-                    # Process tool calls if present
-                    if msg.get('tool_calls'):
-                        for tc in msg.get('tool_calls', []):
-                            func_name = tc['function']['name']
-                            func_args = tc['function']['arguments']
-                            
-                            tool_calls_data.append({
-                                'id': tc['id'],
-                                'function': func_name,
-                                'arguments': func_args
-                            })
-                            
-                            # Track for matching with tool results
-                            pending_tool_calls[tc['id']] = {
-                                'function': func_name,
-                                'arguments': func_args
-                            }
-                            
-                            # Check if this is a skill activation or tool call
-                            if func_name.startswith('activate_'):
-                                skill_name = func_name.replace('activate_', '')
-                                self.add_event('skill_activation', {
-                                    'skill_name': skill_name
-                                })
-                            else:
-                                # This is a tool execution
-                                try:
-                                    args = json.loads(func_args) if isinstance(func_args, str) else func_args
-                                except:
-                                    args = {}
-                                    
-                                self.add_event('tool_call', {
-                                    'tool_name': func_name,
-                                    'arguments': args
-                                })
-                    
-                    self.add_event('llm_response', {
-                        'content': msg.get('content'),
-                        'thinking': None,
-                        'tool_calls': tool_calls_data
-                    })
-                    
-                elif msg.get('role') == 'tool':
-                    # Parse tool result
-                    tool_call_id = msg.get('tool_call_id')
-                    content = msg.get('content', '{}')
-                    
-                    try:
-                        result = json.loads(content)
-                    except:
-                        result = {'content': content}
-                    
-                    # Match with pending tool call
-                    tool_info = pending_tool_calls.get(tool_call_id, {})
-                    
-                    self.add_event('tool_result', {
-                        'tool_name': tool_info.get('function', 'unknown'),
-                        'result': result
-                    })
-            
-            # Add final response event
-            self.add_event('final_response', {'content': response})
+            # Don't manually add final_response - agent's _log_message handles it
             
             return response, self.events
         except Exception as e:
             error_msg = f"Error: {str(e)}"
-            self.add_event('error', {'message': error_msg})
+            elapsed = time.time() - self.start_time
+            self.add_event('error', {'message': error_msg}, elapsed)
             return error_msg, self.events
 
 
@@ -199,50 +196,80 @@ def run_agent():
     
     def generate():
         """Generate SSE events for the agent execution"""
-        wrapper = WebAgentWrapper(agent)
+        event_queue = queue.Queue()
+        wrapper = WebAgentWrapper(agent, event_queue=event_queue)
+        
+        # Run agent in background thread
+        agent_done = threading.Event()
+        agent_error = None
+        agent_response = None
+        
+        def run_agent():
+            nonlocal agent_response, agent_error
+            try:
+                agent_response, _ = wrapper.run(user_input)
+            except Exception as e:
+                agent_error = e
+            finally:
+                agent_done.set()
+        
+        agent_thread = threading.Thread(target=run_agent)
+        agent_thread.start()
         
         try:
             # Send initial event
             yield f"data: {json.dumps({'type': 'start', 'input': user_input})}\n\n"
             
-            # Run agent
-            response, events = wrapper.run(user_input)
-            
-            # Send all events
-            for event in events:
-                with state_lock:
-                    agent_state['elapsed_time'] = event['elapsed']
-                    agent_state['logs'].append(event)
+            # Stream events as they come from the queue
+            while not agent_done.is_set() or not event_queue.empty():
+                try:
+                    # Wait for event with timeout so we can check if agent is done
+                    event = event_queue.get(timeout=0.1)
                     
-                    # Update chat history
-                    if event['type'] == 'user_message':
-                        agent_state['chat_history'].append({
-                            'role': 'user',
-                            'content': event['data']['content'],
-                            'timestamp': event['timestamp']
-                        })
-                    elif event['type'] == 'llm_response':
-                        agent_state['chat_history'].append({
-                            'role': 'assistant',
-                            'content': event['data']['content'],
-                            'thinking': event['data'].get('thinking'),
-                            'tool_calls': event['data'].get('tool_calls', []),
-                            'timestamp': event['timestamp']
-                        })
-                    elif event['type'] == 'tool_call':
-                        agent_state['tools_called'].append(event['data'])
-                    elif event['type'] == 'tool_result':
-                        agent_state['chat_history'].append({
-                            'role': 'tool',
-                            'content': json.dumps(event['data']['result']),
-                            'tool_name': event['data']['tool_name'],
-                            'timestamp': event['timestamp']
-                        })
-                
-                yield f"data: {json.dumps(event)}\n\n"
+                    with state_lock:
+                        agent_state['elapsed_time'] = event['elapsed']
+                        agent_state['logs'].append(event)
+                        
+                        # Update chat history
+                        if event['type'] == 'user_message':
+                            agent_state['chat_history'].append({
+                                'role': 'user',
+                                'content': event['data']['content'],
+                                'timestamp': event['timestamp']
+                            })
+                        elif event['type'] == 'llm_response':
+                            agent_state['chat_history'].append({
+                                'role': 'assistant',
+                                'content': event['data']['content'],
+                                'thinking': event['data'].get('thinking'),
+                                'tool_calls': event['data'].get('tool_calls', []),
+                                'timestamp': event['timestamp']
+                            })
+                        elif event['type'] == 'tool_call':
+                            agent_state['tools_called'].append(event['data'])
+                        elif event['type'] == 'tool_result':
+                            agent_state['chat_history'].append({
+                                'role': 'tool',
+                                'content': json.dumps(event['data']['result']),
+                                'tool_name': event['data']['tool_name'],
+                                'timestamp': event['timestamp']
+                            })
+                    
+                    yield f"data: {json.dumps(event)}\n\n"
+                    
+                except queue.Empty:
+                    # No events available, continue waiting
+                    continue
             
-            # Send completion event
-            yield f"data: {json.dumps({'type': 'complete', 'response': response})}\n\n"
+            # Wait for agent thread to finish
+            agent_thread.join()
+            
+            # Check for errors
+            if agent_error:
+                yield f"data: {json.dumps({'type': 'error', 'message': str(agent_error)})}\n\n"
+            else:
+                # Send completion event
+                yield f"data: {json.dumps({'type': 'complete', 'response': agent_response})}\n\n"
             
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
@@ -273,6 +300,9 @@ def get_tools_called():
 if __name__ == '__main__':
     # Initialize agent on startup
     init_agent()
+    
+    # Start keepalive background task
+    start_keepalive_thread()
     
     # Run the app
     port = int(os.getenv('PORT', 10000))

@@ -221,12 +221,23 @@
             box-shadow: 0 2px 8px rgba(255, 140, 0, 0.1);
             overflow-wrap: break-word;
             word-wrap: break-word;
+            transition: all 0.3s ease;
+        }
+        
+        .skill-item.active {
+            background: rgba(255, 140, 0, 0.15);
+            border-left-color: #00ff88;
+            box-shadow: 0 2px 12px rgba(0, 255, 136, 0.3);
         }
         
         .skill-name {
             font-weight: 600;
             color: #ffa500;
             margin-bottom: 4px;
+        }
+        
+        .skill-item.active .skill-name {
+            color: #00ff88;
         }
         
         .skill-desc {
@@ -250,12 +261,23 @@
             box-shadow: 0 2px 8px rgba(255, 107, 0, 0.1);
             overflow-wrap: break-word;
             word-wrap: break-word;
+            transition: all 0.3s ease;
+        }
+        
+        .tool-item.active {
+            background: rgba(255, 140, 0, 0.15);
+            border-left-color: #00ff88;
+            box-shadow: 0 2px 12px rgba(0, 255, 136, 0.3);
         }
         
         .tool-name {
             font-weight: 600;
             color: #ff8c00;
             margin-bottom: 4px;
+        }
+        
+        .tool-item.active .tool-name {
+            color: #00ff88;
         }
         
         .tool-args {
@@ -467,7 +489,7 @@
                 </div>
                 
                 <div class="card">
-                    <h2 class="card-title">🛠️ Tools Called</h2>
+                    <h2 class="card-title">🛠️ Tool Calls</h2>
                     <div id="toolsList" class="tools-list">
                         <div class="empty-state">No tools called yet</div>
                     </div>
@@ -587,70 +609,83 @@
             
             switch (event.type) {
                 case 'start':
-                    addLog('user', `User: ${event.input}`, elapsed);
+                    addLog('user', `User: ${event.input}`, event.timestamp || new Date().toISOString(), elapsed);
                     break;
                     
                 case 'user_message':
-                    addLog('user', `📨 User: ${event.data.content}`, elapsed);
+                    addLog('user', `📨 User: ${event.data.content}`, event.timestamp, elapsed);
                     break;
                     
                 case 'llm_call_start':
-                    addLog('llm', `🤔 Calling LLM (iteration ${event.data.iteration})...`, elapsed, true);
+                    addLog('llm', `🤔 Calling LLM (iteration ${event.data.iteration})...`, event.timestamp, elapsed, true);
                     break;
                     
                 case 'llm_response':
                     if (event.data.content) {
-                        addLog('llm', `🤖 LLM: ${event.data.content}`, elapsed);
+                        addLog('llm', `🤖 LLM: ${event.data.content}`, event.timestamp, elapsed);
                     }
                     if (event.data.tool_calls && event.data.tool_calls.length > 0) {
                         event.data.tool_calls.forEach(tc => {
-                            addLog('llm', `🔧 LLM wants to call: ${tc.function}`, elapsed);
+                            addLog('llm', `🔧 LLM wants to call: ${tc.function}`, event.timestamp, elapsed);
                         });
                     }
                     break;
                     
                 case 'skill_activation':
-                    addLog('skill', `⚡ Activating skill: ${event.data.skill_name}...`, elapsed, true);
+                    addLog('skill', `⚡ Activating skill: ${event.data.skill_name}...`, event.timestamp, elapsed, true);
+                    markSkillActive(event.data.skill_name, true);
                     break;
                     
                 case 'skill_activated':
-                    addLog('skill', `✅ Skill activated: ${event.data.skill_name} (${event.data.tools_count} tools)`, elapsed);
+                    removeLastSpinner('skill');
+                    addLog('skill', `✅ Skill activated: ${event.data.skill_name} (${event.data.tools_count} tools)`, event.timestamp, elapsed);
                     break;
                     
                 case 'skill_activation_failed':
-                    addLog('error', `❌ Failed to activate skill: ${event.data.skill_name}`, elapsed);
+                    removeLastSpinner('skill');
+                    markSkillActive(event.data.skill_name, false);
+                    addLog('error', `❌ Failed to activate skill: ${event.data.skill_name}`, event.timestamp, elapsed);
                     break;
                     
                 case 'tool_call':
-                    addLog('tool', `🛠️ Calling tool: ${event.data.tool_name}`, elapsed, true);
-                    addToolToList(event.data);
+                    addLog('tool', `🛠️ Calling tool: ${event.data.tool_name}`, event.timestamp, elapsed, true);
+                    const toolItem = addToolToList(event.data, event.timestamp);
+                    toolItem.classList.add('active');
+                    toolItem.dataset.toolName = event.data.tool_name;
                     break;
                     
                 case 'tool_result':
+                    removeLastSpinner('tool');
+                    markLastToolInactive(event.data.tool_name);
                     const resultStr = JSON.stringify(event.data.result).substring(0, 100);
-                    addLog('tool', `✓ Tool result: ${resultStr}...`, elapsed);
+                    const resultIcon = event.data.error ? '✗' : '✓';
+                    const resultType = event.data.error ? 'error' : 'tool';
+                    const resultMsg = event.data.error 
+                        ? `${resultIcon} Tool failed: ${event.data.result.error || 'Unknown error'}`
+                        : `${resultIcon} Tool result: ${resultStr}...`;
+                    addLog(resultType, resultMsg, event.timestamp, elapsed);
                     break;
                     
                 case 'final_response':
-                    addLog('complete', `✅ Complete: ${event.data.content}`, elapsed);
+                    addLog('complete', `✅ Complete: ${event.data.content}`, event.timestamp, elapsed);
                     break;
                     
                 case 'complete':
-                    addLog('complete', `🎉 Agent completed!`, elapsed);
+                    addLog('complete', `🎉 Agent completed!`, event.timestamp || new Date().toISOString(), elapsed);
                     updateChatHistory();
                     break;
                     
                 case 'error':
-                    addLog('error', `❌ Error: ${event.data.message}`, elapsed);
+                    addLog('error', `❌ Error: ${event.data.message}`, event.timestamp, elapsed);
                     break;
                     
                 case 'max_iterations':
-                    addLog('error', `⚠️ Maximum iterations reached`, elapsed);
+                    addLog('error', `⚠️ Maximum iterations reached`, event.timestamp, elapsed);
                     break;
             }
         }
         
-        function addLog(type, message, elapsed, spinner = false) {
+        function addLog(type, message, timestamp, elapsed, spinner = false) {
             const logsDiv = document.getElementById('logs');
             
             // Remove empty state if present
@@ -662,20 +697,40 @@
             const logEntry = document.createElement('div');
             logEntry.className = `log-entry ${type}`;
             
+            // Add data attribute if this is a spinner that needs to be updated
+            if (spinner) {
+                logEntry.dataset.spinner = type;
+            }
+            
             const icon = spinner ? '<span class="spinner"></span>' : '<span class="icon">•</span>';
-            const time = `${elapsed.toFixed(1)}s`;
+            
+            // Format timestamp as HH:MM:SS
+            const date = new Date(timestamp);
+            const timeStr = date.toLocaleTimeString('en-US', { hour12: false });
+            const elapsedStr = `+${elapsed.toFixed(1)}s`;
             
             logEntry.innerHTML = `
                 ${icon}
                 <span class="message">${escapeHtml(message)}</span>
-                <span class="time">${time}</span>
+                <span class="time">${timeStr} (${elapsedStr})</span>
             `;
             
             logsDiv.appendChild(logEntry);
             logsDiv.scrollTop = logsDiv.scrollHeight;
+            
+            return logEntry;
         }
         
-        function addToolToList(toolData) {
+        function removeLastSpinner(spinnerType) {
+            const logsDiv = document.getElementById('logs');
+            const spinners = logsDiv.querySelectorAll(`[data-spinner="${spinnerType}"]`);
+            if (spinners.length > 0) {
+                const lastSpinner = spinners[spinners.length - 1];
+                lastSpinner.remove();
+            }
+        }
+        
+        function addToolToList(toolData, timestamp) {
             const toolsList = document.getElementById('toolsList');
             
             // Remove empty state if present
@@ -684,14 +739,65 @@
                 emptyState.remove();
             }
             
+            // Format arguments nicely (plain text, not JSON)
+            let argsDisplay = '';
+            if (toolData.arguments && typeof toolData.arguments === 'object') {
+                const entries = Object.entries(toolData.arguments);
+                argsDisplay = entries.map(([key, value]) => {
+                    // Truncate long values
+                    let displayValue = String(value);
+                    if (displayValue.length > 100) {
+                        displayValue = displayValue.substring(0, 97) + '...';
+                    }
+                    return `${key}: ${displayValue}`;
+                }).join(', ');
+            } else {
+                argsDisplay = String(toolData.arguments || '(no arguments)');
+            }
+            
+            // Format timestamp
+            const date = new Date(timestamp);
+            const timeStr = date.toLocaleTimeString('en-US', { hour12: false });
+            
             const toolItem = document.createElement('div');
             toolItem.className = 'tool-item';
             toolItem.innerHTML = `
-                <div class="tool-name">${escapeHtml(toolData.tool_name)}</div>
-                <div class="tool-args">${escapeHtml(JSON.stringify(toolData.arguments, null, 2))}</div>
+                <div class="tool-name">${escapeHtml(toolData.tool_name)} <span style="color: #888; font-size: 0.9em;">${timeStr}</span></div>
+                <div class="tool-args">${escapeHtml(argsDisplay)}</div>
             `;
             
             toolsList.appendChild(toolItem);
+            return toolItem;
+        }
+        
+        function markSkillActive(skillName, isActive) {
+            const skillsList = document.getElementById('skillsList');
+            const skillItems = skillsList.querySelectorAll('.skill-item');
+            
+            skillItems.forEach(item => {
+                const nameEl = item.querySelector('.skill-name');
+                if (nameEl && nameEl.textContent.toLowerCase().includes(skillName.toLowerCase())) {
+                    if (isActive) {
+                        item.classList.add('active');
+                    } else {
+                        item.classList.remove('active');
+                    }
+                }
+            });
+        }
+        
+        function markLastToolInactive(toolName) {
+            const toolsList = document.getElementById('toolsList');
+            const toolItems = Array.from(toolsList.querySelectorAll('.tool-item.active'));
+            
+            // Find the last active tool with matching name
+            for (let i = toolItems.length - 1; i >= 0; i--) {
+                const item = toolItems[i];
+                if (item.dataset.toolName === toolName) {
+                    item.classList.remove('active');
+                    break;
+                }
+            }
         }
         
         function toggleOverlay() {

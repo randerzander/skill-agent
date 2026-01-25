@@ -535,12 +535,7 @@
             
             startTime = Date.now();
             
-            // Create EventSource for SSE
-            eventSource = new EventSource('/api/run?' + new URLSearchParams({
-                input: input
-            }));
-            
-            // Make POST request to start the agent
+            // Make POST request to start the agent (SSE response)
             fetch('/api/run', {
                 method: 'POST',
                 headers: {

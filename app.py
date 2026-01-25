@@ -69,178 +69,93 @@ class WebAgentWrapper:
         })
     
     def run(self, user_input):
-        """Run the agent with event tracking"""
+        """Run the agent with event tracking - delegates to AgentSkillsFramework"""
         self.start_time = time.time()
         self.events = []
         
         # Add user message event
         self.add_event('user_message', {'content': user_input})
         
-        # Add user message to agent history
-        self.agent.messages.append({"role": "user", "content": user_input})
-        
-        # Track active skill and tools
-        active_skill = None
-        active_tools = []
-        
-        iteration = 0
-        max_iterations = 10
-        
-        while iteration < max_iterations:
-            iteration += 1
+        # Use the agent's run method which has all the correct logic
+        try:
+            response = self.agent.run(user_input, max_iterations=10)
             
-            # Prepare tools based on active skill
-            if active_skill:
-                tools = active_tools
-            else:
-                tools = [self.agent.activate_skill_tool]
+            # Extract events from the agent's conversation history
+            # Track tool calls to match with results
+            pending_tool_calls = {}
             
-            try:
-                # Add LLM call start event
-                self.add_event('llm_call_start', {
-                    'model': self.agent.model,
-                    'iteration': iteration
-                })
-                
-                # Make LLM call
-                response = self.agent.client.chat.completions.create(
-                    model=self.agent.model,
-                    messages=self.agent.messages,
-                    tools=tools
-                )
-                
-                message = response.choices[0].message
-                
-                # Extract thinking/reasoning if available (for models that support it)
-                thinking = None
-                try:
-                    if hasattr(message, 'reasoning_content') and message.reasoning_content:
-                        thinking = message.reasoning_content
-                    elif hasattr(message, 'thinking') and message.thinking:
-                        thinking = message.thinking
-                except Exception:
-                    # Silently ignore if thinking extraction fails
-                    pass
-                
-                # Add LLM response event
-                self.add_event('llm_response', {
-                    'content': message.content,
-                    'thinking': thinking,
-                    'tool_calls': [
-                        {
-                            'id': tc.id,
-                            'function': tc.function.name,
-                            'arguments': tc.function.arguments
-                        }
-                        for tc in (message.tool_calls or [])
-                    ]
-                })
-                
-                # Check if LLM wants to call a tool
-                if message.tool_calls:
-                    # Add assistant message with tool calls to history
-                    self.agent.messages.append({
-                        "role": "assistant",
-                        "content": message.content,
-                        "tool_calls": [
-                            {
-                                "id": tc.id,
-                                "type": tc.type,
-                                "function": {
-                                    "name": tc.function.name,
-                                    "arguments": tc.function.arguments
-                                }
-                            }
-                            for tc in message.tool_calls
-                        ]
-                    })
+            for msg in self.agent.messages:
+                if msg.get('role') == 'assistant':
+                    tool_calls_data = []
                     
-                    # Execute each tool call
-                    for tool_call in message.tool_calls:
-                        function_name = tool_call.function.name
-                        function_args = json.loads(tool_call.function.arguments)
-                        
-                        # Check if this is a skill activation request
-                        if function_name == "activate_skill":
-                            skill_name = function_args.get("skill_name")
+                    # Process tool calls if present
+                    if msg.get('tool_calls'):
+                        for tc in msg.get('tool_calls', []):
+                            func_name = tc['function']['name']
+                            func_args = tc['function']['arguments']
                             
-                            self.add_event('skill_activation', {
-                                'skill_name': skill_name
+                            tool_calls_data.append({
+                                'id': tc['id'],
+                                'function': func_name,
+                                'arguments': func_args
                             })
                             
-                            if skill_name in self.agent.skill_loader.skills:
-                                # Activate the skill
-                                skill_content = self.agent.skill_loader.activate_skill(skill_name)
-                                active_skill = skill_name
-                                active_tools = self.agent.skill_loader.get_skill_tools(skill_name)
-                                
-                                # Add tool response confirming activation
-                                activation_msg = f"Skill '{skill_name}' activated successfully.\n\nFull skill instructions:\n{skill_content}\n\nYou now have access to tools from this skill."
-                                self.agent.messages.append({
-                                    "role": "tool",
-                                    "tool_call_id": tool_call.id,
-                                    "content": activation_msg
-                                })
-                                
-                                self.add_event('skill_activated', {
-                                    'skill_name': skill_name,
-                                    'tools_count': len(active_tools)
-                                })
-                            else:
-                                # Skill not found
-                                self.agent.messages.append({
-                                    "role": "tool",
-                                    "tool_call_id": tool_call.id,
-                                    "content": f"Error: Skill '{skill_name}' not found."
-                                })
-                                
-                                self.add_event('skill_activation_failed', {
+                            # Track for matching with tool results
+                            pending_tool_calls[tc['id']] = {
+                                'function': func_name,
+                                'arguments': func_args
+                            }
+                            
+                            # Check if this is a skill activation or tool call
+                            if func_name.startswith('activate_'):
+                                skill_name = func_name.replace('activate_', '')
+                                self.add_event('skill_activation', {
                                     'skill_name': skill_name
                                 })
-                        else:
-                            # This is a skill script execution
-                            if active_skill:
-                                script_name = function_name
-                                
+                            else:
+                                # This is a tool execution
+                                try:
+                                    args = json.loads(func_args) if isinstance(func_args, str) else func_args
+                                except:
+                                    args = {}
+                                    
                                 self.add_event('tool_call', {
-                                    'tool_name': script_name,
-                                    'skill': active_skill,
-                                    'arguments': function_args
-                                })
-                                
-                                # Execute the script
-                                result = self.agent.skill_loader.execute_skill_script(
-                                    active_skill,
-                                    script_name,
-                                    function_args.get("params", {})
-                                )
-                                
-                                # Add tool response to messages
-                                self.agent.messages.append({
-                                    "role": "tool",
-                                    "tool_call_id": tool_call.id,
-                                    "content": json.dumps(result)
-                                })
-                                
-                                self.add_event('tool_result', {
-                                    'tool_name': script_name,
-                                    'result': result
+                                    'tool_name': func_name,
+                                    'arguments': args
                                 })
                     
-                    # Continue to next iteration
-                    continue
-                
-                # No tool calls - return the response
-                final_response = message.content if message.content else "I've completed the task."
-                self.add_event('final_response', {'content': final_response})
-                return final_response, self.events
+                    self.add_event('llm_response', {
+                        'content': msg.get('content'),
+                        'thinking': None,
+                        'tool_calls': tool_calls_data
+                    })
                     
-            except Exception as e:
-                self.add_event('error', {'message': str(e)})
-                return f"Error: {str(e)}", self.events
-        
-        self.add_event('max_iterations', {})
-        return "Maximum iterations reached. Unable to complete the request.", self.events
+                elif msg.get('role') == 'tool':
+                    # Parse tool result
+                    tool_call_id = msg.get('tool_call_id')
+                    content = msg.get('content', '{}')
+                    
+                    try:
+                        result = json.loads(content)
+                    except:
+                        result = {'content': content}
+                    
+                    # Match with pending tool call
+                    tool_info = pending_tool_calls.get(tool_call_id, {})
+                    
+                    self.add_event('tool_result', {
+                        'tool_name': tool_info.get('function', 'unknown'),
+                        'result': result
+                    })
+            
+            # Add final response event
+            self.add_event('final_response', {'content': response})
+            
+            return response, self.events
+        except Exception as e:
+            error_msg = f"Error: {str(e)}"
+            self.add_event('error', {'message': error_msg})
+            return error_msg, self.events
 
 
 @app.route('/')

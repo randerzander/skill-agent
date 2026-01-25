@@ -6,8 +6,9 @@
     <title>Agent Skills Framework - Web Frontend</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="https://unpkg.com/htmx.org/dist/ext/sse.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
     <style>
-        * {
+        *{
             margin: 0;
             padding: 0;
             box-sizing: border-box;
@@ -153,7 +154,6 @@
             background: rgba(10, 14, 39, 0.4);
             border-radius: 8px;
             border-left: 4px solid #00ff88;
-            white-space: pre-wrap;
             word-wrap: break-word;
         }
         
@@ -164,6 +164,50 @@
         .result-content em {
             color: #ffa500;
             font-style: italic;
+        }
+        
+        .result-content a {
+            color: #00bbff;
+            text-decoration: underline;
+            transition: color 0.2s;
+        }
+        
+        .result-content a:hover {
+            color: #00ff88;
+        }
+        
+        .result-content p {
+            margin-bottom: 12px;
+        }
+        
+        .result-content ul, .result-content ol {
+            margin-left: 20px;
+            margin-bottom: 12px;
+        }
+        
+        .result-content li {
+            margin-bottom: 6px;
+        }
+        
+        .result-content code {
+            background: rgba(255, 140, 0, 0.1);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            color: #ffa500;
+        }
+        
+        .result-content pre {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 12px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin-bottom: 12px;
+        }
+        
+        .result-content pre code {
+            background: none;
+            padding: 0;
         }
         
         .logs-section {
@@ -729,8 +773,23 @@
             // Show the result section
             resultSection.style.display = 'block';
             
-            // Set the content
-            resultContent.textContent = content;
+            // Configure marked to open links in new tab
+            marked.setOptions({
+                breaks: true,
+                gfm: true
+            });
+            
+            // Render markdown to HTML
+            const htmlContent = marked.parse(content);
+            
+            // Set the rendered HTML content
+            resultContent.innerHTML = htmlContent;
+            
+            // Make all links open in new tab
+            resultContent.querySelectorAll('a').forEach(link => {
+                link.setAttribute('target', '_blank');
+                link.setAttribute('rel', 'noopener noreferrer');
+            });
             
             // Scroll into view
             resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });

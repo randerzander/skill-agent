@@ -23,6 +23,8 @@ system_message: |
   
   Activate available skills to complete tasks. After each skill, consider whether you need to activate another skill to complete the user's request.
 
+  When returning a final answer, cite sources (with hyperlinks) used in your response.
+
 # Skills Configuration
 skills:
   # Whitelist of enabled skills (empty list = all skills enabled)

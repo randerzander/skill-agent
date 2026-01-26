@@ -566,13 +566,42 @@
             padding: 40px;
             font-style: italic;
         }
-            padding: 40px;
-            font-style: italic;
-        }
         
+        /* Responsive layout for tablets and mobile devices */
         @media (max-width: 1024px) {
             .main-content {
                 grid-template-columns: 1fr;
+            }
+            
+            body {
+                padding: 10px;
+            }
+            
+            header {
+                padding: 15px;
+            }
+            
+            h1 {
+                font-size: 24px;
+            }
+            
+            .card {
+                padding: 15px;
+            }
+        }
+        
+        /* Additional optimizations for small mobile screens */
+        @media (max-width: 480px) {
+            body {
+                padding: 5px;
+            }
+            
+            h1 {
+                font-size: 20px;
+            }
+            
+            .subtitle {
+                font-size: 12px;
             }
         }
     </style>

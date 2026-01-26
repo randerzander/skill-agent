@@ -85,11 +85,11 @@ class SkillLoader:
                         skill_data = self.parse_skill_md(skill_md_file)
                         skill_name = skill_data['name']
                         
-                        # Always load verify skill for automatic link checking
+                        # Always load finalize skill for automatic link checking and final submission
                         # Check if skill is enabled (if whitelist exists)
                         if self.enabled_skills and skill_name not in self.enabled_skills:
-                            # Allow verify to load even if not in enabled list
-                            if skill_name != 'verify':
+                            # Allow finalize to load even if not in enabled list
+                            if skill_name != 'finalize':
                                 continue
                         
                         # Store only metadata for progressive disclosure
@@ -116,33 +116,23 @@ class SkillLoader:
             for skill in self.skills.values()
         ]
     
-    def get_skills_xml(self) -> str:
-        """Generate XML format for available skills (Claude-compatible)"""
-        xml_parts = ["<available_skills>"]
-        for skill in self.skills.values():
-            xml_parts.append(f"  <skill>")
-            xml_parts.append(f"    <name>{skill['name']}</name>")
-            xml_parts.append(f"    <description>{skill['description']}</description>")
-            xml_parts.append(f"  </skill>")
-        xml_parts.append("</available_skills>")
-        return "\n".join(xml_parts)
-    
+
     def _auto_verify_links(self, response: str, live=None) -> tuple[str, bool]:
         """
-        Automatically verify links in response if verify skill is available
+        Automatically verify links in response if finalize skill is available
         
         Returns:
             tuple: (verified_response, should_retry)
                 - verified_response: Response with invalid links removed
                 - should_retry: True if agent should try again with better sources
         """
-        # Check if verify skill exists
-        if 'verify' not in self.skills:
+        # Check if finalize skill exists
+        if 'finalize' not in self.skills:
             return response, False
         
         try:
             # Import verify_links script
-            verify_script_path = Path(self.skills['verify']['skill_md_path']).parent / 'scripts' / 'verify_links.py'
+            verify_script_path = Path(self.skills['finalize']['skill_md_path']).parent / 'scripts' / 'verify_links.py'
             if not verify_script_path.exists():
                 return response, False
             
@@ -227,7 +217,105 @@ class SkillLoader:
         return scripts
     
     def get_skill_tools(self, skill_name: str) -> List[Dict[str, Any]]:
-        """Convert skill scripts into OpenAI tool definitions"""
+        """Convert skill scripts/tools into OpenAI tool definitions"""
+        skill = self.skills.get(skill_name)
+        if not skill:
+            return []
+        
+        skill_path = Path(skill['path'])
+        tools_file = skill_path / "scripts" / "tools.py"
+        
+        # If tools.py exists, extract functions from it
+        if tools_file.exists():
+            return self._extract_tools_from_module(tools_file, skill_name)
+        
+        # Fallback to old script-based approach for backwards compatibility
+        return self._get_tools_from_scripts(skill_name)
+    
+    def _extract_tools_from_module(self, tools_file: Path, skill_name: str) -> List[Dict[str, Any]]:
+        """Extract tool definitions from tools.py by inspecting functions"""
+        import inspect
+        import importlib.util
+        
+        try:
+            # Import the tools module
+            spec = importlib.util.spec_from_file_location(f"{skill_name}.tools", tools_file)
+            if spec is None or spec.loader is None:
+                return []
+            
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            
+            tools = []
+            
+            # Find all functions in the module
+            for name, obj in inspect.getmembers(module, inspect.isfunction):
+                # Skip private functions and main
+                if name.startswith('_') or name == 'main':
+                    continue
+                
+                # Skip functions not defined in this module (i.e., imports)
+                if obj.__module__ != module.__name__:
+                    continue
+                
+                # Get function signature
+                sig = inspect.signature(obj)
+                doc = inspect.getdoc(obj) or f"Execute {name}"
+                
+                # Build parameters spec from function signature
+                properties = {}
+                required = []
+                
+                for param_name, param in sig.parameters.items():
+                    # Skip *args, **kwargs
+                    if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                        continue
+                    
+                    # Get type hint
+                    param_type = "string"  # default
+                    if param.annotation != inspect.Parameter.empty:
+                        if param.annotation == int:
+                            param_type = "integer"
+                        elif param.annotation == float:
+                            param_type = "number"
+                        elif param.annotation == bool:
+                            param_type = "boolean"
+                        elif param.annotation == list:
+                            param_type = "array"
+                        elif param.annotation == dict:
+                            param_type = "object"
+                    
+                    properties[param_name] = {
+                        "type": param_type,
+                        "description": f"The {param_name} parameter"
+                    }
+                    
+                    # Required if no default value
+                    if param.default == inspect.Parameter.empty:
+                        required.append(param_name)
+                
+                tool = {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": doc,
+                        "parameters": {
+                            "type": "object",
+                            "properties": properties,
+                            "required": required
+                        }
+                    }
+                }
+                tools.append(tool)
+            
+            return tools
+            
+        except Exception as e:
+            console.print(f"[red]Error extracting tools from {tools_file}: {e}[/red]")
+            return []
+    
+    def _get_tools_from_scripts(self, skill_name: str) -> List[Dict[str, Any]]:
+        """Legacy method: Get tools from individual script files and SKILL.md frontmatter"""
         scripts = self.get_skill_scripts(skill_name)
         tools = []
         
@@ -239,9 +327,46 @@ class SkillLoader:
         # Load full skill data to get frontmatter
         skill_md_path = Path(skill['skill_md_path'])
         skill_data = self.parse_skill_md(skill_md_path)
+        
+        # Check for scripts-based definition (new format)
+        scripts_def = skill_data['frontmatter'].get('scripts', [])
+        if scripts_def:
+            for script_def in scripts_def:
+                properties = {}
+                required = []
+                
+                params = script_def.get('parameters', [])
+                for param in params:
+                    properties[param['name']] = {
+                        "type": param.get('type', 'string'),
+                        "description": param.get('description', '')
+                    }
+                    if param.get('required', False):
+                        required.append(param['name'])
+                
+                tool = {
+                    "type": "function",
+                    "function": {
+                        "name": script_def['name'],
+                        "description": script_def.get('description', ''),
+                        "parameters": {
+                            "type": "object",
+                            "properties": properties,
+                            "required": required
+                        }
+                    }
+                }
+                tools.append(tool)
+            return tools
+        
+        # Fallback to old parameters-based format
         parameters_spec = skill_data['frontmatter'].get('parameters', {})
         
         for script in scripts:
+            # Skip tools.py if it exists (already handled above)
+            if script['name'] == 'tools':
+                continue
+                
             # Get parameters for this specific script
             script_params = parameters_spec.get(script['name'], {})
             
@@ -294,7 +419,7 @@ class SkillLoader:
         }
     
     def execute_skill_script(self, skill_name: str, script_name: str, parameters: Dict[str, Any] = None, live_display = None) -> Dict[str, Any]:
-        """Execute a specific skill script with given parameters"""
+        """Execute a specific skill script/function with given parameters"""
         if skill_name not in self.skills:
             return {"error": f"Skill '{skill_name}' not found"}
         
@@ -305,6 +430,31 @@ class SkillLoader:
         if not scripts_dir.exists():
             return {"error": f"No scripts directory found for skill '{skill_name}'"}
         
+        # First, try to find the function in tools.py
+        tools_file = scripts_dir / "tools.py"
+        if tools_file.exists():
+            try:
+                # Import tools module
+                import importlib.util
+                spec = importlib.util.spec_from_file_location(f"{skill_name}.tools", tools_file)
+                if spec and spec.loader:
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    
+                    # Check if the function exists
+                    if hasattr(module, script_name):
+                        func = getattr(module, script_name)
+                        # Call the function directly with parameters
+                        result = func(**parameters) if parameters else func()
+                        # Ensure result is a dict
+                        if not isinstance(result, dict):
+                            return {"result": result}
+                        return result
+            except Exception as e:
+                error_details = traceback.format_exc()
+                return {"error": f"Function execution failed: {str(e)}", "traceback": error_details}
+        
+        # Fallback to individual script files (legacy)
         script_path = scripts_dir / f"{script_name}.py"
         if not script_path.exists():
             return {"error": f"Script '{script_name}' not found for skill '{skill_name}'"}
@@ -359,6 +509,14 @@ class AgentSkillsFramework:
         # Event callback for real-time updates (used by web UI)
         self.event_callback = event_callback
         
+        # Clean scratch directory at the beginning of each run
+        import shutil
+        if SCRATCH_DIR.exists():
+            shutil.rmtree(SCRATCH_DIR)
+        SCRATCH_DIR.mkdir(exist_ok=True)
+        (SCRATCH_DIR / "incomplete_tasks").mkdir(exist_ok=True)
+        (SCRATCH_DIR / "completed_tasks").mkdir(exist_ok=True)
+        
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
         if not self.api_key:
             raise ValueError("OpenRouter API key not found. Set OPENROUTER_API_KEY environment variable.")
@@ -391,12 +549,8 @@ Activate available skills to complete tasks. After each skill, consider whether 
         self.messages = [{"role": "system", "content": system_message}]
         
         # Create tool definitions for each skill (discovery phase)
-        # Exclude verify skill from discovery - it runs automatically
         self.skill_discovery_tools = []
         for skill_name, skill in self.skill_loader.skills.items():
-            if skill_name == 'verify':
-                continue  # Don't expose verify to agent
-            
             self.skill_discovery_tools.append({
                 "type": "function",
                 "function": {
@@ -409,6 +563,50 @@ Activate available skills to complete tasks. After each skill, consider whether 
                     }
                 }
             })
+        
+        # Global tools that are ALWAYS available regardless of active skill
+        global_tools_config = config.get('global_tools', {})
+        self.global_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "deactivate",
+                    "description": global_tools_config.get('deactivate', {}).get('description', 
+                        "Deactivate the current skill and return to skill selection mode"),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "complete_task",
+                    "description": global_tools_config.get('complete_task', {}).get('description',
+                        "Mark a task as complete and save its result to completed_tasks directory"),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "task_number": {
+                                "type": "integer",
+                                "description": "The task number to mark as complete"
+                            },
+                            "result": {
+                                "type": "string",
+                                "description": "The result or answer for this task"
+                            }
+                        },
+                        "required": ["task_number", "result"]
+                    }
+                }
+            }
+        ]
+        
+        # Track reasoning traces separately (for display only, not sent to LLM)
+        # Map message index -> reasoning trace
+        self.reasoning_traces = {}
         
         # Keep the old activate_skill tool as fallback (shouldn't be needed)
         self.activate_skill_tool = {
@@ -479,8 +677,13 @@ Activate available skills to complete tasks. After each skill, consider whether 
         Returns:
             The final response from the agent
         """
+        # Reset conversation history for new query
+        system_message = self.messages[0]  # Preserve system message
+        self.messages = [system_message]
+        self.reasoning_traces = {}  # Clear reasoning traces
+        
         # Write user query to scratch directory for skills to access
-        user_query_file = SCRATCH_DIR / "user_query.txt"
+        user_query_file = SCRATCH_DIR / "USER_QUERY.txt"
         with open(user_query_file, 'w') as f:
             f.write(user_input)
         
@@ -493,21 +696,55 @@ Activate available skills to complete tasks. After each skill, consider whether 
             "content": user_input
         })
         
-        # Track active skill and its tools
-        active_skill = None
-        active_tools = []
+        # Auto-activate planning skill at the beginning
+        active_skill = "planning"
+        skill_content = self.skill_loader.activate_skill("planning")
+        active_tools = self.skill_loader.get_skill_tools("planning")
+        
+        # Calculate token estimate
+        token_estimate = len(skill_content) // 4
+        
+        console.print(f"[green]✓[/green] Skill auto-activated: [bold]planning[/bold] [dim](~{token_estimate} tokens added)[/dim]")
+        
+        # Include CURRENT_TASK if it exists
+        current_task_file = SCRATCH_DIR / "CURRENT_TASK.txt"
+        current_task_info = ""
+        
+        if current_task_file.exists():
+            try:
+                with open(current_task_file, 'r') as f:
+                    current_task_data = json.load(f)
+                
+                if current_task_data.get('status') == 'active':
+                    current_task_info = f"\n\n--- CURRENT TASK ---\nTask #{current_task_data['task_number']}: {current_task_data['description']}\n---"
+            except:
+                pass  # If file is malformed, skip
+        
+        # Inject skill content and current task info into messages
+        skill_message = f"Skill 'planning' activated.\n\nInstructions:\n{skill_content}\n\nYou can access tools from this skill.{current_task_info}"
+        self.messages.append({"role": "assistant", "content": skill_message})
+        
+        # Log the auto-activation
+        self._log_message({
+            "type": "skill_activated",
+            "skill_name": "planning",
+            "tools_count": len(active_tools),
+            "tokens_added": token_estimate,
+            "auto_activated": True
+        })
         
         iteration = 0
         while iteration < max_iterations:
             iteration += 1
             
             # Prepare tools based on active skill
-            # If no skill is active, offer the activate_skill tool
-            # If a skill is active, offer that skill's tools
+            # Global tools are ALWAYS available
+            # If no skill is active, offer the activate_skill tools + global tools
+            # If a skill is active, offer that skill's tools + global tools
             if active_skill:
-                tools = active_tools
+                tools = active_tools + self.global_tools
             else:
-                tools = self.skill_discovery_tools
+                tools = self.skill_discovery_tools + self.global_tools
             
             # Get LLM response with tools
             try:
@@ -561,20 +798,27 @@ Activate available skills to complete tasks. After each skill, consider whether 
                         
                         thread.join()
                         
-                        # Calculate output tokens
-                        message = response.choices[0].message
-                        output_text = message.content or ""
-                        if message.tool_calls:
-                            for tc in message.tool_calls:
-                                output_text += tc.function.name + tc.function.arguments
-                        output_tokens = self._estimate_tokens(output_text)
+                        # Get actual token counts from response
+                        if hasattr(response, 'usage') and response.usage:
+                            input_tokens = response.usage.prompt_tokens
+                            output_tokens = response.usage.completion_tokens
+                            total_tokens = response.usage.total_tokens
+                        else:
+                            # Fallback to estimates if usage not available
+                            message = response.choices[0].message
+                            output_text = message.content or ""
+                            if message.tool_calls:
+                                for tc in message.tool_calls:
+                                    output_text += tc.function.name + tc.function.arguments
+                            output_tokens = self._estimate_tokens(output_text)
+                            total_tokens = input_tokens + output_tokens
                         
                         # Final update with completion time
                         elapsed = time.time() - start_time
                         final_text = Text()
                         final_text.append("✓", style="green bold")
-                        final_text.append(f" LLM call completed [{model_display}] ", style="dim")
-                        final_text.append(f"~{input_tokens:,} in / ~{output_tokens:,} out ", style="blue")
+                        final_text.append(f" LLM [{model_display}] ", style="dim")
+                        final_text.append(f"{input_tokens:,} prompt + {output_tokens:,} completion = {total_tokens:,} total ", style="blue")
                         final_text.append(f"({elapsed:.1f}s)", style="green")
                         live.update(final_text)
                 else:
@@ -588,8 +832,17 @@ Activate available skills to complete tasks. After each skill, consider whether 
                 
                 message = response.choices[0].message
                 
-                # Log LLM response
-                self._log_message({
+                # Get actual token usage from response
+                actual_tokens = None
+                if hasattr(response, 'usage') and response.usage:
+                    actual_tokens = {
+                        'prompt_tokens': response.usage.prompt_tokens,
+                        'completion_tokens': response.usage.completion_tokens,
+                        'total_tokens': response.usage.total_tokens
+                    }
+                
+                # Log LLM response (including reasoning if present)
+                log_data = {
                     "type": "llm_response",
                     "iteration": iteration,
                     "model": self.model,
@@ -601,12 +854,32 @@ Activate available skills to complete tasks. After each skill, consider whether 
                             "arguments": json.loads(tc.function.arguments)
                         } for tc in (message.tool_calls or [])
                     ] if message.tool_calls else None
-                })
+                }
+                
+                # Add actual token usage if available
+                if actual_tokens:
+                    log_data['tokens'] = actual_tokens
+                
+                # Capture reasoning traces if present (some models include this)
+                if hasattr(message, 'refusal') and message.refusal:
+                    log_data['refusal'] = message.refusal
+                
+                # Check for reasoning in the raw response
+                if hasattr(response, 'choices') and len(response.choices) > 0:
+                    choice = response.choices[0]
+                    # Some models expose reasoning via message attributes
+                    if hasattr(choice.message, 'reasoning_content') and choice.message.reasoning_content:
+                        log_data['reasoning'] = choice.message.reasoning_content
+                    # Or via the choice itself
+                    elif hasattr(choice, 'reasoning') and choice.reasoning:
+                        log_data['reasoning'] = choice.reasoning
+                
+                self._log_message(log_data)
                 
                 # Check if LLM wants to call a tool
                 if message.tool_calls:
                     # Add assistant message with tool calls to history
-                    self.messages.append({
+                    assistant_msg = {
                         "role": "assistant",
                         "content": message.content,
                         "tool_calls": [
@@ -620,7 +893,33 @@ Activate available skills to complete tasks. After each skill, consider whether 
                             }
                             for tc in message.tool_calls
                         ]
-                    })
+                    }
+                    
+                    self.messages.append(assistant_msg)
+                    
+                    # Log reasoning if present (for visibility, but don't add to messages sent to OpenAI)
+                    if hasattr(response, 'choices') and len(response.choices) > 0:
+                        choice = response.choices[0]
+                        reasoning_trace = None
+                        # Check various fields where reasoning might be stored
+                        if hasattr(choice.message, 'reasoning') and choice.message.reasoning:
+                            reasoning_trace = choice.message.reasoning
+                        elif hasattr(choice.message, 'reasoning_content') and choice.message.reasoning_content:
+                            reasoning_trace = choice.message.reasoning_content
+                        elif hasattr(choice, 'reasoning') and choice.reasoning:
+                            reasoning_trace = choice.reasoning
+                        
+                        if reasoning_trace:
+                            # Store separately for chat history display
+                            msg_index = len(self.messages) - 1
+                            self.reasoning_traces[msg_index] = reasoning_trace
+                            
+                            # Log to file
+                            self._log_message({
+                                "type": "reasoning_trace",
+                                "iteration": iteration,
+                                "trace": reasoning_trace
+                            })
                     
                     # Execute each tool call
                     for tool_call in message.tool_calls:
@@ -632,7 +931,7 @@ Activate available skills to complete tasks. After each skill, consider whether 
                             skill_name = function_name.replace("activate_", "")
                             
                             if skill_name in self.skill_loader.skills:
-                                # Activate the skill
+                                # Activate the skill (ignore any arguments passed by LLM)
                                 skill_content = self.skill_loader.activate_skill(skill_name)
                                 active_skill = skill_name
                                 active_tools = self.skill_loader.get_skill_tools(skill_name)
@@ -651,7 +950,21 @@ Activate available skills to complete tasks. After each skill, consider whether 
                                 })
                                 
                                 # Add tool response confirming activation
-                                activation_msg = f"Skill '{skill_name}' activated.\n\nInstructions:\n{skill_content}\n\nYou can access tools from this skill."
+                                # Include CURRENT_TASK if it exists
+                                current_task_file = SCRATCH_DIR / "CURRENT_TASK.txt"
+                                current_task_info = ""
+                                
+                                if current_task_file.exists():
+                                    try:
+                                        with open(current_task_file, 'r') as f:
+                                            current_task_data = json.load(f)
+                                        
+                                        if current_task_data.get('status') == 'active':
+                                            current_task_info = f"\n\n--- CURRENT TASK ---\nTask #{current_task_data['task_number']}: {current_task_data['description']}\n---"
+                                    except:
+                                        pass  # If file is malformed, skip
+                                
+                                activation_msg = f"Skill '{skill_name}' activated.\n\nInstructions:\n{skill_content}\n\nYou can access tools from this skill.{current_task_info}"
                                 self.messages.append({
                                     "role": "tool",
                                     "tool_call_id": tool_call.id,
@@ -672,6 +985,179 @@ Activate available skills to complete tasks. After each skill, consider whether 
                                     "tool_call_id": tool_call.id,
                                     "content": f"Error: Skill '{skill_name}' not found."
                                 })
+                        
+                        # Handle global tools
+                        elif function_name == "deactivate":
+                            # Deactivate current skill
+                            if active_skill:
+                                console.print(f"[yellow]↩[/yellow] Deactivated skill: [bold]{active_skill}[/bold]")
+                                
+                                self._log_message({
+                                    "type": "skill_deactivated",
+                                    "skill_name": active_skill
+                                })
+                                
+                                # Log tool execution for UI spinner
+                                self._log_message({
+                                    "type": "tool_execution",
+                                    "script": "deactivate",
+                                    "result": {"result": f"Skill '{active_skill}' deactivated"}
+                                })
+                                
+                                active_skill = None
+                                active_tools = []
+                                
+                                self.messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "content": "Skill deactivated. You can now activate a different skill."
+                                })
+                            else:
+                                # Log tool execution even if no skill active
+                                self._log_message({
+                                    "type": "tool_execution",
+                                    "script": "deactivate",
+                                    "result": {"result": "No skill is currently active"}
+                                })
+                                
+                                self.messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "content": "No skill is currently active."
+                                })
+                        
+                        elif function_name == "complete_task":
+                            # Complete a task and save its result
+                            task_number = function_args.get('task_number')
+                            result_text = function_args.get('result', '')
+                            
+                            incomplete_dir = SCRATCH_DIR / "incomplete_tasks"
+                            completed_dir = SCRATCH_DIR / "completed_tasks"
+                            completed_dir.mkdir(exist_ok=True)
+                            
+                            task_file = incomplete_dir / f"task_{task_number}.txt"
+                            
+                            if task_file.exists():
+                                # Save result to completed tasks
+                                dest_file = completed_dir / f"task_{task_number}.txt"
+                                with open(dest_file, 'w') as f:
+                                    f.write(result_text)
+                                
+                                # Remove from incomplete
+                                task_file.unlink()
+                                
+                                console.print(f"[green]✓[/green] Task {task_number} completed")
+                                
+                                self._log_message({
+                                    "type": "task_completed",
+                                    "task_number": task_number
+                                })
+                                
+                                # Log tool execution for UI spinner
+                                self._log_message({
+                                    "type": "tool_execution",
+                                    "script": "complete_task",
+                                    "result": {"result": f"Task {task_number} completed"}
+                                })
+                                
+                                # Auto-activate next incomplete task
+                                remaining_tasks = sorted([
+                                    f for f in os.listdir(incomplete_dir) 
+                                    if f.startswith("task_") and f.endswith(".txt")
+                                ])
+                                
+                                current_task_file = SCRATCH_DIR / "CURRENT_TASK.txt"
+                                
+                                if remaining_tasks:
+                                    # Get next task
+                                    next_task_file = incomplete_dir / remaining_tasks[0]
+                                    next_task_num = remaining_tasks[0].replace("task_", "").replace(".txt", "")
+                                    
+                                    with open(next_task_file, 'r') as f:
+                                        next_task_desc = f.read().strip()
+                                    
+                                    # Update CURRENT_TASK.txt
+                                    current_task_data = {
+                                        "task_number": int(next_task_num),
+                                        "description": next_task_desc,
+                                        "status": "active"
+                                    }
+                                    
+                                    with open(current_task_file, 'w') as f:
+                                        f.write(json.dumps(current_task_data, indent=2))
+                                    
+                                    console.print(f"[cyan]→[/cyan] Auto-activated task {next_task_num}")
+                                    
+                                    # Log task activation for UI
+                                    self._log_message({
+                                        "type": "task_activated",
+                                        "task_number": int(next_task_num)
+                                    })
+                                    
+                                    response_msg = f"Task {task_number} marked as complete. Task {next_task_num} is now active: {next_task_desc}"
+                                else:
+                                    # No more tasks - clear CURRENT_TASK and auto-activate answer
+                                    current_task_data = {
+                                        "task_number": None,
+                                        "description": None,
+                                        "status": "none"
+                                    }
+                                    
+                                    with open(current_task_file, 'w') as f:
+                                        f.write(json.dumps(current_task_data, indent=2))
+                                    
+                                    console.print(f"[green]✓[/green] All tasks completed!")
+                                    
+                                    # Auto-activate answer skill
+                                    if "answer" in self.skill_loader.skills:
+                                        skill_content = self.skill_loader.activate_skill("answer")
+                                        active_skill = "answer"
+                                        active_tools = self.skill_loader.get_skill_tools("answer")
+                                        
+                                        token_estimate = len(skill_content) // 4
+                                        console.print(f"[green]✓[/green] Skill auto-activated: [bold]answer[/bold] [dim](~{token_estimate} tokens added)[/dim]")
+                                        
+                                        # Log the auto-activation
+                                        self._log_message({
+                                            "type": "skill_activated",
+                                            "skill_name": "answer",
+                                            "tools_count": len(active_tools),
+                                            "tokens_added": token_estimate,
+                                            "auto_activated": True
+                                        })
+                                        
+                                        response_msg = f"Task {task_number} marked as complete. All tasks completed!\n\nSkill 'answer' activated.\n\nInstructions:\n{skill_content}\n\nYou can now synthesize results, verify citations, and submit your final answer."
+                                    else:
+                                        response_msg = f"Task {task_number} marked as complete. No more tasks remaining."
+                                
+                                self.messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "content": json.dumps({
+                                        "status": "success",
+                                        "task_number": task_number,
+                                        "message": response_msg
+                                    })
+                                })
+                            else:
+                                console.print(f"[red]✗[/red] Task {task_number} not found")
+                                
+                                # Log tool execution for UI spinner (error case)
+                                self._log_message({
+                                    "type": "tool_execution",
+                                    "script": "complete_task",
+                                    "result": {"error": f"Task {task_number} not found"}
+                                })
+                                
+                                self.messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "content": json.dumps({
+                                        "status": "error",
+                                        "message": f"Task {task_number} not found in incomplete_tasks"
+                                    })
+                                })
+                        
                         else:
                             # This is a skill script execution
                             if active_skill:
@@ -739,12 +1225,79 @@ Activate available skills to complete tasks. After each skill, consider whether 
                                     "tool_call_id": tool_call.id,
                                     "content": json.dumps(result)
                                 })
+                                
+                                # Check if this was a submit tool call - if so, end execution
+                                if isinstance(result, dict) and result.get('status') == 'FINAL_ANSWER_SUBMITTED':
+                                    final_answer = result.get('final_answer', '')
+                                    self._log_message({
+                                        "type": "final_response",
+                                        "content": final_answer
+                                    })
+                                    return final_answer
                     
                     # Continue to next iteration
                     continue
                 
-                # No tool calls - return the response
+                # No tool calls - check if there are incomplete tasks before allowing completion
+                incomplete_dir = SCRATCH_DIR / "incomplete_tasks"
+                incomplete_tasks = []
+                if incomplete_dir.exists():
+                    incomplete_tasks = sorted([
+                        f for f in os.listdir(incomplete_dir) 
+                        if f.startswith("task_") and f.endswith(".txt")
+                    ])
+                
+                if incomplete_tasks:
+                    # There are incomplete tasks - don't allow completion
+                    console.print(f"[yellow]⚠[/yellow] Cannot complete: {len(incomplete_tasks)} incomplete task(s) remaining")
+                    
+                    # Force LLM to continue by adding a system message
+                    reminder_msg = f"""You have {len(incomplete_tasks)} incomplete task(s):
+{chr(10).join([f"- Task {t.replace('task_', '').replace('.txt', '')}" for t in incomplete_tasks])}
+
+You must complete all tasks before finishing. Use the deactivate tool to switch skills, then activate the appropriate skill (e.g., activate_web) to work on these tasks."""
+                    
+                    self.messages.append({
+                        "role": "user",
+                        "content": reminder_msg
+                    })
+                    
+                    # Continue to next iteration
+                    continue
+                
+                # No incomplete tasks - return the response
                 final_response = message.content if message.content else "I've completed the task."
+                
+                # Add final assistant message to history with reasoning if present
+                final_msg = {
+                    "role": "assistant",
+                    "content": final_response
+                }
+                
+                self.messages.append(final_msg)
+                
+                # Log reasoning if present (for visibility, but don't add to messages sent to OpenAI)
+                if hasattr(response, 'choices') and len(response.choices) > 0:
+                    choice = response.choices[0]
+                    reasoning_trace = None
+                    if hasattr(choice.message, 'reasoning') and choice.message.reasoning:
+                        reasoning_trace = choice.message.reasoning
+                    elif hasattr(choice.message, 'reasoning_content') and choice.message.reasoning_content:
+                        reasoning_trace = choice.message.reasoning_content
+                    elif hasattr(choice, 'reasoning') and choice.reasoning:
+                        reasoning_trace = choice.reasoning
+                    
+                    if reasoning_trace:
+                        # Store separately for chat history display
+                        msg_index = len(self.messages) - 1
+                        self.reasoning_traces[msg_index] = reasoning_trace
+                        
+                        # Log to file
+                        self._log_message({
+                            "type": "reasoning_trace",
+                            "iteration": iteration,
+                            "trace": reasoning_trace
+                        })
                 
                 # Automatically verify links in final response
                 verified_response, should_retry = self.skill_loader._auto_verify_links(final_response, live=live)
@@ -767,7 +1320,9 @@ Activate available skills to complete tasks. After each skill, consider whether 
                 return verified_response
                     
             except Exception as e:
+                import traceback
                 print(f"Error calling LLM: {e}")
+                traceback.print_exc()
                 return f"Error: {str(e)}"
         
         # Max iterations reached - extract best response from history
@@ -806,6 +1361,12 @@ def main():
     
     print(f"Loaded {len(agent.skill_loader.skills)} skill(s)")
     print("=" * 50)
+    
+    # Print available tools for discovery
+    print("\nAvailable skill activation tools:")
+    for tool in agent.skill_discovery_tools:
+        print(f"  - {tool['function']['name']}: {tool['function']['description']}")
+    print()
     
     # Interactive loop
     while True:

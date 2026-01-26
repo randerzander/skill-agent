@@ -23,9 +23,6 @@ def simulate_agent_workflow():
     skills = loader.get_skills_metadata()
     print(f"Available skills (metadata only): {json.dumps(skills, indent=2)}")
     
-    # Show XML format (Claude-compatible)
-    print(f"\nSkills in XML format:\n{loader.get_skills_xml()}")
-    
     # Step 2: Simulate user input
     print("\n" + "=" * 70)
     print("[Step 2] User Input")

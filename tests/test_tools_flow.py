@@ -95,10 +95,19 @@ def main():
     
     message = response.choices[0].message
     
+    # Check for reasoning traces
+    if hasattr(response.choices[0], 'message') and hasattr(response.choices[0].message, 'reasoning'):
+        print(f"\n[REASONING TRACE]:")
+        print(f"  {response.choices[0].message.reasoning}")
+    
     # Step 3: Parse LLM response
     print(f"\n[STEP 3] LLM Response Analysis:")
     print(f"  Content: {message.content}")
     print(f"  Tool calls: {len(message.tool_calls) if message.tool_calls else 0}")
+    
+    # Print raw response for debugging
+    print(f"\n[DEBUG] Raw response object:")
+    print(f"  {response}")
     
     if message.tool_calls:
         # Add assistant's message with tool calls to history
@@ -151,6 +160,11 @@ def main():
         )
         
         final_message = final_response.choices[0].message
+        
+        # Check for reasoning traces in final response
+        if hasattr(final_response.choices[0], 'message') and hasattr(final_response.choices[0].message, 'reasoning'):
+            print(f"\n[FINAL REASONING TRACE]:")
+            print(f"  {final_response.choices[0].message.reasoning}")
         
         print(f"\n[STEP 7] Final LLM Response:")
         print(f"  {final_message.content}")

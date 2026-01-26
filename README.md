@@ -13,7 +13,6 @@ Agent Skills are a lightweight, open format for extending AI agent capabilities 
 - **LLM-Driven Selection**: Uses an LLM to intelligently select appropriate skills based on user input
 - **Dynamic Activation**: Loads full skill instructions into context when needed
 - **Script Execution**: Execute bundled scripts with JSON parameters
-- **XML Format Support**: Claude-compatible skill metadata format
 - **Extensible**: Easy to add new skills by following the skill structure
 
 ## Installation
@@ -189,7 +188,6 @@ The framework consists of three main components:
 Manages skill discovery and execution following the Agent Skills specification:
 - Parses `SKILL.md` files to extract frontmatter and content
 - Implements progressive disclosure (loads metadata at startup, full content on demand)
-- Provides skill metadata in XML format for Claude-compatible prompts
 - Discovers scripts in skill directories
 - Converts scripts to OpenAI tool definitions
 - Imports and executes skill scripts directly as Python modules
@@ -199,7 +197,6 @@ Manages skill discovery and execution following the Agent Skills specification:
 
 Main agent loop orchestrating the workflow:
 - Manages conversation with the LLM
-- Uses XML format for skill metadata injection  
 - Activates skills when mentioned by the LLM
 - Generates OpenAI tools from activated skill scripts
 - Handles tool calling and execution

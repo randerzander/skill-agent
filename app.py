@@ -70,31 +70,75 @@ class WebAgentWrapper:
         self.start_time = None
         self.event_queue = event_queue  # Queue for real-time streaming
         
-    def event_callback(self, log_entry):
+    def event_callback(self, event_type_or_entry, data=None):
         """Callback for real-time events from the agent"""
+        # Skip invalid types
+        if isinstance(event_type_or_entry, list):
+            return
+        if not isinstance(event_type_or_entry, (str, dict)):
+            return
+            
         elapsed = time.time() - self.start_time if self.start_time else 0
         
+        # Handle both signatures
+        if data is None and isinstance(event_type_or_entry, dict):
+            # Old signature: single log_entry dict
+            log_entry = event_type_or_entry
+            event_type = log_entry.get('type')
+        else:
+            # New signature: event_type and data
+            event_type = event_type_or_entry
+            log_entry = {
+                'type': event_type,
+                'data': data if data else {},
+                'timestamp': datetime.now().isoformat()
+            }
+        
         # Convert agent log entries to web UI events
-        event_type = log_entry.get('type')
+        if not event_type:
+            return
         
         if event_type == 'user_input':
-            self.add_event('user_message', {'content': log_entry.get('content')}, elapsed)
+            content = log_entry.get('content') if isinstance(log_entry, dict) else ''
+            self.add_event('user_message', {'content': content}, elapsed)
         elif event_type == 'skill_activated':
             # Skill activation completed successfully
+            # Handle both old format (skill_name in log_entry) and new format (in data dict)
+            if 'data' in log_entry and isinstance(log_entry['data'], dict):
+                skill_name = log_entry['data'].get('skill_name', '')
+                tools_count = log_entry['data'].get('tools_count', 0)
+            else:
+                skill_name = log_entry.get('skill_name', '')
+                tools_count = log_entry.get('tools_count', 0)
             self.add_event('skill_activated', {
-                'skill_name': log_entry.get('skill_name'),
-                'tools_count': log_entry.get('tools_count', 0)
+                'skill_name': skill_name,
+                'tools_count': tools_count
+            }, elapsed)
+        elif event_type == 'skill_deactivated':
+            # Skill deactivated
+            skill_name = log_entry.get('skill_name') if isinstance(log_entry, dict) else ''
+            self.add_event('skill_deactivated', {
+                'skill_name': skill_name
             }, elapsed)
         elif event_type == 'skill_activation_failed':
             # Skill activation failed
+            skill_name = log_entry.get('skill_name') if isinstance(log_entry, dict) else ''
             self.add_event('skill_activation_failed', {
-                'skill_name': log_entry.get('skill_name')
+                'skill_name': skill_name
             }, elapsed)
+        elif event_type == 'reasoning_trace':
+            # Just store it, don't process
+            if isinstance(log_entry, dict) and isinstance(log_entry.get('data'), dict):
+                trace = log_entry['data'].get('trace', '')
+                if trace:
+                    self.add_event('reasoning', {'content': trace}, elapsed)
         elif event_type == 'llm_response':
-            tool_calls = log_entry.get('tool_calls') or []
+            tool_calls = log_entry.get('tool_calls', []) if isinstance(log_entry, dict) else []
             
             # Check for skill activations and tool calls
             for tc in tool_calls:
+                if not isinstance(tc, dict):
+                    continue
                 func_name = tc.get('function')
                 if func_name and func_name.startswith('activate_'):
                     skill_name = func_name.replace('activate_', '')
@@ -105,22 +149,58 @@ class WebAgentWrapper:
                         'arguments': tc.get('arguments', {})
                     }, elapsed)
             
-            self.add_event('llm_response', {
-                'content': log_entry.get('content'),
+            # Include reasoning traces if present
+            content = log_entry.get('content', '') if isinstance(log_entry, dict) else ''
+            response_data = {
+                'content': content,
                 'tool_calls': tool_calls
-            }, elapsed)
+            }
+            if isinstance(log_entry, dict) and 'reasoning' in log_entry:
+                response_data['reasoning'] = log_entry['reasoning']
+            
+            self.add_event('llm_response', response_data, elapsed)
         elif event_type == 'tool_execution':
             # Tool execution result
-            result = log_entry.get('result', {})
-            is_error = 'error' in result
+            result = log_entry.get('result', {}) if isinstance(log_entry, dict) else {}
+            is_error = 'error' in result if isinstance(result, dict) else False
+            script = log_entry.get('script', '') if isinstance(log_entry, dict) else ''
             
             self.add_event('tool_result', {
-                'tool_name': log_entry.get('script'),
+                'tool_name': script,
                 'result': result,
                 'error': is_error
             }, elapsed)
+            
+            # Check for task creation
+            # Result is nested: result.result contains the actual JSON string
+            if script in ['create_task', 'create_subquestion_task'] and isinstance(result, dict):
+                actual_result = result.get('result', '')
+                if isinstance(actual_result, str):
+                    try:
+                        result_data = json.loads(actual_result)
+                        if result_data.get('status') == 'success':
+                            task_status = 'active' if result_data.get('is_active') else 'incomplete'
+                            self.add_event('task_created', {
+                                'task_number': result_data.get('task_number'),
+                                'description': result_data.get('description'),
+                                'status': task_status
+                            }, elapsed)
+                    except:
+                        pass
+                    
+        elif event_type == 'task_completed':
+            # Task marked as complete
+            task_number = log_entry.get('task_number') if isinstance(log_entry, dict) else None
+            if task_number:
+                self.add_event('task_completed', {'task_number': task_number}, elapsed)
+        elif event_type == 'task_activated':
+            # Task auto-activated
+            task_number = log_entry.get('task_number') if isinstance(log_entry, dict) else None
+            if task_number:
+                self.add_event('task_activated', {'task_number': task_number}, elapsed)
         elif event_type == 'final_response':
-            self.add_event('final_response', {'content': log_entry.get('content')}, elapsed)
+            content = log_entry.get('content', '') if isinstance(log_entry, dict) else ''
+            self.add_event('final_response', {'content': content}, elapsed)
         
     def add_event(self, event_type, data, elapsed):
         """Add an event to the events list and optionally to queue for streaming"""
@@ -215,7 +295,7 @@ def run_agent():
         agent_error = None
         agent_response = None
         
-        def run_agent():
+        def run_agent_thread():
             nonlocal agent_response, agent_error
             try:
                 agent_response, _ = wrapper.run(user_input)
@@ -224,13 +304,10 @@ def run_agent():
             finally:
                 agent_done.set()
         
-        agent_thread = threading.Thread(target=run_agent)
+        agent_thread = threading.Thread(target=run_agent_thread)
         agent_thread.start()
         
         try:
-            # Send initial event
-            yield f"data: {json.dumps({'type': 'start', 'input': user_input})}\n\n"
-            
             # Stream events as they come from the queue
             while not agent_done.is_set() or not event_queue.empty():
                 try:
@@ -293,11 +370,20 @@ def run_agent():
 
 @app.route('/api/chat_history')
 def get_chat_history():
-    """Get the full chat history"""
+    """Get the full chat history with reasoning traces injected"""
     with state_lock:
+        messages_with_thinking = []
+        if agent and agent.messages:
+            for idx, msg in enumerate(agent.messages):
+                msg_copy = dict(msg)
+                # Inject thinking trace if available for this message
+                if idx in agent.reasoning_traces:
+                    msg_copy['thinking'] = agent.reasoning_traces[idx]
+                messages_with_thinking.append(msg_copy)
+        
         return jsonify({
             'history': agent_state['chat_history'],
-            'messages': agent.messages if agent else []
+            'messages': messages_with_thinking
         })
 
 

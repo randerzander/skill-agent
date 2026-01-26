@@ -364,6 +364,62 @@
             border: 1px solid rgba(255, 140, 0, 0.2);
         }
         
+        .tasks-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .task-item {
+            padding: 12px;
+            background: rgba(30, 33, 57, 0.8);
+            border-radius: 6px;
+            border-left: 3px solid rgba(255, 140, 0, 0.3);
+            transition: all 0.3s ease;
+        }
+        
+        .task-item.active {
+            background: rgba(255, 140, 0, 0.15);
+            border-left-color: #ff8c00;
+            box-shadow: 0 2px 12px rgba(255, 140, 0, 0.3);
+        }
+        
+        .task-item.completed {
+            opacity: 0.6;
+            border-left-color: #00ff88;
+        }
+        
+        .task-number {
+            font-weight: 600;
+            color: #ff8c00;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+        
+        .task-item.active .task-number {
+            color: #ffa500;
+            text-shadow: 0 0 10px rgba(255, 140, 0, 0.5);
+        }
+        
+        .task-item.completed .task-number {
+            color: #00ff88;
+        }
+        
+        .task-description {
+            font-size: 13px;
+            color: #a0a5b8;
+            line-height: 1.4;
+        }
+        
+        .task-status {
+            font-size: 11px;
+            color: #8a8f9f;
+            margin-top: 4px;
+            font-style: italic;
+        }
+        
         .overlay {
             display: none;
             position: fixed;
@@ -566,9 +622,9 @@
                 </div>
                 
                 <div class="card">
-                    <h2 class="card-title">🛠️ Tool Calls</h2>
-                    <div id="toolsList" class="tools-list">
-                        <div class="empty-state">No tools called yet</div>
+                    <h2 class="card-title">📋 Tasks</h2>
+                    <div id="tasksList" class="tasks-list">
+                        <div class="empty-state">No tasks yet</div>
                     </div>
                 </div>
             </div>
@@ -619,23 +675,48 @@
         
         function runAgent() {
             const input = document.getElementById('userInput').value.trim();
-            if (!input) return;
+            console.log('runAgent called with input:', input);
+            if (!input) {
+                console.log('No input, returning');
+                return;
+            }
             
             const submitBtn = document.getElementById('submitBtn');
             const logsDiv = document.getElementById('logs');
+            const tasksList = document.getElementById('tasksList');
+            
+            if (!submitBtn) {
+                console.error('submitBtn not found!');
+                return;
+            }
+            if (!logsDiv) {
+                console.error('logs not found!');
+                return;
+            }
+            if (!tasksList) {
+                console.error('tasksList not found!');
+                return;
+            }
+            
+            console.log('Starting agent run...');
             
             // Clear logs and disable input
             logsDiv.innerHTML = '';
             submitBtn.disabled = true;
             document.getElementById('userInput').disabled = true;
             
-            // Clear tools list
-            document.getElementById('toolsList').innerHTML = '<div class="empty-state">No tools called yet</div>';
+            // Clear tasks list
+            tasksList.innerHTML = '<div class="empty-state">No tasks yet</div>';
             
             // Hide result section from previous run
-            document.getElementById('resultSection').style.display = 'none';
+            const resultSection = document.getElementById('resultSection');
+            if (resultSection) {
+                resultSection.style.display = 'none';
+            }
             
             startTime = Date.now();
+            
+            console.log('Making POST to /api/run...');
             
             // Make POST request to start the agent (SSE response)
             fetch('/api/run', {
@@ -645,6 +726,10 @@
                 },
                 body: JSON.stringify({ input: input })
             }).then(response => {
+                console.log('Got response:', response);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 
@@ -678,7 +763,7 @@
                 readStream();
             }).catch(err => {
                 console.error('Error running agent:', err);
-                addLog('error', 'Failed to run agent: ' + err.message, 0);
+                addLog('error', 'Failed to run agent: ' + err.message, new Date().toISOString(), 0);
                 submitBtn.disabled = false;
                 document.getElementById('userInput').disabled = false;
             });
@@ -688,10 +773,6 @@
             const elapsed = event.elapsed || ((Date.now() - startTime) / 1000);
             
             switch (event.type) {
-                case 'start':
-                    addLog('user', `User: ${event.input}`, event.timestamp || new Date().toISOString(), elapsed);
-                    break;
-                    
                 case 'user_message':
                     addLog('user', `📨 User: ${event.data.content}`, event.timestamp, elapsed);
                     break;
@@ -706,9 +787,26 @@
                     }
                     if (event.data.tool_calls && event.data.tool_calls.length > 0) {
                         event.data.tool_calls.forEach(tc => {
-                            addLog('llm', `🔧 LLM wants to call: ${tc.function}`, event.timestamp, elapsed);
+                            // Format arguments for display
+                            let argsStr = '';
+                            if (tc.arguments && typeof tc.arguments === 'object') {
+                                const argEntries = Object.entries(tc.arguments);
+                                if (argEntries.length > 0) {
+                                    argsStr = ' (' + argEntries.map(([k, v]) => {
+                                        let val = String(v);
+                                        if (val.length > 50) val = val.substring(0, 47) + '...';
+                                        return `${k}: ${val}`;
+                                    }).join(', ') + ')';
+                                }
+                            }
+                            addLog('llm', `🔧 LLM wants to call: ${tc.function}${argsStr}`, event.timestamp, elapsed);
                         });
                     }
+                    break;
+                    
+                case 'reasoning':
+                    // Reasoning traces are only shown in Full Chat History, not execution log
+                    // They are logged to the conversation file but not displayed here
                     break;
                     
                 case 'skill_activation':
@@ -718,6 +816,7 @@
                     
                 case 'skill_activated':
                     removeLastSpinner('skill');
+                    markSkillActive(event.data.skill_name, true);
                     addLog('skill', `✅ Skill activated: ${event.data.skill_name} (${event.data.tools_count} tools)`, event.timestamp, elapsed);
                     break;
                     
@@ -744,6 +843,19 @@
                         ? `${resultIcon} Tool failed: ${event.data.result.error || 'Unknown error'}`
                         : `${resultIcon} Tool result: ${resultStr}...`;
                     addLog(resultType, resultMsg, event.timestamp, elapsed);
+                    
+                    // Check if this is complete_task result with auto-activation message
+                    if (event.data.tool_name === 'complete_task' && !event.data.error && event.data.result.message) {
+                        const msg = event.data.result.message;
+                        // Parse message like "Task 1 complete. Task 2 is now active: description"
+                        const match = msg.match(/Task \d+ (?:marked as complete|complete)\. Task (\d+) is now active: (.+)/);
+                        if (match) {
+                            const nextTaskNum = parseInt(match[1]);
+                            const nextTaskDesc = match[2];
+                            // Update task to active
+                            updateTask(nextTaskNum, 'active');
+                        }
+                    }
                     break;
                     
                 case 'final_response':
@@ -751,9 +863,31 @@
                     showResult(event.data.content);
                     break;
                     
+                case 'task_created':
+                    addTask(event.data.task_number, event.data.description, event.data.status || 'incomplete');
+                    addLog('task', `📋 Task ${event.data.task_number} created`, event.timestamp, elapsed);
+                    break;
+                    
+                case 'task_completed':
+                    updateTask(event.data.task_number, 'completed');
+                    addLog('task', `✅ Task ${event.data.task_number} completed`, event.timestamp, elapsed);
+                    break;
+                    
+                case 'task_activated':
+                    updateTask(event.data.task_number, 'active');
+                    addLog('task', `→ Task ${event.data.task_number} is now active`, event.timestamp, elapsed);
+                    break;
+                    
                 case 'complete':
                     addLog('complete', `🎉 Agent completed!`, event.timestamp || new Date().toISOString(), elapsed);
                     updateChatHistory();
+                    break;
+                    
+                case 'skill_deactivated':
+                    // Clear all active skill highlights when deactivating
+                    const allSkills = document.querySelectorAll('.skill-item');
+                    allSkills.forEach(skill => skill.classList.remove('active'));
+                    addLog('skill', `↩️ Skill deactivated: ${event.data.skill_name}`, event.timestamp, elapsed);
                     break;
                     
                 case 'error':
@@ -841,49 +975,88 @@
         }
         
         function addToolToList(toolData, timestamp) {
-            const toolsList = document.getElementById('toolsList');
+            // Tool calls are now shown in execution log only
+            // This function is kept for compatibility but doesn't add to sidebar
+            return document.createElement('div');
+        }
+        
+        function addTask(taskNumber, description, status = 'incomplete') {
+            const tasksList = document.getElementById('tasksList');
             
             // Remove empty state if present
-            const emptyState = toolsList.querySelector('.empty-state');
+            const emptyState = tasksList.querySelector('.empty-state');
             if (emptyState) {
                 emptyState.remove();
             }
             
-            // Format arguments nicely (plain text, not JSON)
-            let argsDisplay = '';
-            if (toolData.arguments && typeof toolData.arguments === 'object') {
-                const entries = Object.entries(toolData.arguments);
-                argsDisplay = entries.map(([key, value]) => {
-                    // Truncate long values
-                    let displayValue = String(value);
-                    if (displayValue.length > 100) {
-                        displayValue = displayValue.substring(0, 97) + '...';
-                    }
-                    return `${key}: ${displayValue}`;
-                }).join(', ');
-            } else {
-                argsDisplay = String(toolData.arguments || '(no arguments)');
+            // Check if task already exists
+            const existingTask = tasksList.querySelector(`[data-task-number="${taskNumber}"]`);
+            if (existingTask) {
+                // Update existing task
+                updateTask(taskNumber, status);
+                return existingTask;
             }
             
-            // Format timestamp
-            const date = new Date(timestamp);
-            const timeStr = date.toLocaleTimeString('en-US', { hour12: false });
+            const taskItem = document.createElement('div');
+            taskItem.className = 'task-item';
+            taskItem.dataset.taskNumber = taskNumber;
             
-            const toolItem = document.createElement('div');
-            toolItem.className = 'tool-item';
-            toolItem.innerHTML = `
-                <div class="tool-name">${escapeHtml(toolData.tool_name)} <span style="color: #888; font-size: 0.9em;">${timeStr}</span></div>
-                <div class="tool-args">${escapeHtml(argsDisplay)}</div>
+            let statusText = status === 'active' ? '🔵 Active' : 
+                           status === 'completed' ? '✅ Complete' : 
+                           '⏸️ Pending';
+            
+            if (status === 'active') {
+                taskItem.classList.add('active');
+            } else if (status === 'completed') {
+                taskItem.classList.add('completed');
+            }
+            
+            taskItem.innerHTML = `
+                <div class="task-number">Task #${taskNumber}</div>
+                <div class="task-description">${escapeHtml(description)}</div>
+                <div class="task-status">${statusText}</div>
             `;
             
-            toolsList.appendChild(toolItem);
-            return toolItem;
+            tasksList.appendChild(taskItem);
+            return taskItem;
+        }
+        
+        function updateTask(taskNumber, status) {
+            const tasksList = document.getElementById('tasksList');
+            const taskItem = tasksList.querySelector(`[data-task-number="${taskNumber}"]`);
+            
+            if (!taskItem) return;
+            
+            // Remove old status classes
+            taskItem.classList.remove('active', 'completed');
+            
+            // Add new status
+            let statusText = status === 'active' ? '🔵 Active' : 
+                           status === 'completed' ? '✅ Complete' : 
+                           '⏸️ Pending';
+            
+            if (status === 'active') {
+                taskItem.classList.add('active');
+            } else if (status === 'completed') {
+                taskItem.classList.add('completed');
+            }
+            
+            const statusEl = taskItem.querySelector('.task-status');
+            if (statusEl) {
+                statusEl.textContent = statusText;
+            }
         }
         
         function markSkillActive(skillName, isActive) {
             const skillsList = document.getElementById('skillsList');
             const skillItems = skillsList.querySelectorAll('.skill-item');
             
+            if (isActive) {
+                // Clear all active states first
+                skillItems.forEach(item => item.classList.remove('active'));
+            }
+            
+            // Then mark the specific skill
             skillItems.forEach(item => {
                 const nameEl = item.querySelector('.skill-name');
                 if (nameEl && nameEl.textContent.toLowerCase().includes(skillName.toLowerCase())) {
@@ -897,17 +1070,7 @@
         }
         
         function markLastToolInactive(toolName) {
-            const toolsList = document.getElementById('toolsList');
-            const toolItems = Array.from(toolsList.querySelectorAll('.tool-item.active'));
-            
-            // Find the last active tool with matching name
-            for (let i = toolItems.length - 1; i >= 0; i--) {
-                const item = toolItems[i];
-                if (item.dataset.toolName === toolName) {
-                    item.classList.remove('active');
-                    break;
-                }
-            }
+            // Tool calls no longer displayed in sidebar, this is a no-op
         }
         
         function toggleOverlay() {
@@ -918,6 +1081,16 @@
                 updateChatHistory();
             }
         }
+        
+        // Close overlay on Escape key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                const overlay = document.getElementById('chatOverlay');
+                if (overlay.classList.contains('active')) {
+                    overlay.classList.remove('active');
+                }
+            }
+        });
         
         function updateChatHistory() {
             fetch('/api/chat_history')
@@ -947,20 +1120,45 @@
                                 toolCallsHtml = `
                                     <div class="message-tool-calls">
                                         <strong>Tool Calls:</strong>
-                                        ${msg.tool_calls.map(tc => `
-                                            <div class="tool-call">
-                                                📞 ${tc.function.name}(${tc.function.arguments})
-                                            </div>
-                                        `).join('')}
+                                        ${msg.tool_calls.map(tc => {
+                                            // Pretty print JSON arguments
+                                            let prettyArgs = tc.function.arguments;
+                                            try {
+                                                const parsed = JSON.parse(tc.function.arguments);
+                                                prettyArgs = JSON.stringify(parsed, null, 2);
+                                            } catch (e) {
+                                                // If not valid JSON, use as is
+                                            }
+                                            return `
+                                                <div class="tool-call">
+                                                    📞 ${tc.function.name}
+                                                    <pre style="margin: 5px 0 0 20px; font-size: 12px; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px; overflow-x: auto;">${escapeHtml(prettyArgs)}</pre>
+                                                </div>
+                                            `;
+                                        }).join('')}
                                     </div>
                                 `;
+                            }
+                            
+                            // Try to pretty-print JSON content for tool messages
+                            let contentHtml = '';
+                            if (msg.role === 'tool') {
+                                try {
+                                    const parsed = JSON.parse(content);
+                                    const prettyJson = JSON.stringify(parsed, null, 2);
+                                    contentHtml = `<pre style="margin: 0; font-size: 12px; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px; overflow-x: auto; color: #a0d5b8;">${escapeHtml(prettyJson)}</pre>`;
+                                } catch (e) {
+                                    contentHtml = `<div class="message-content">${escapeHtml(content)}</div>`;
+                                }
+                            } else {
+                                contentHtml = `<div class="message-content">${escapeHtml(content)}</div>`;
                             }
                             
                             return `
                                 <div class="chat-message ${msg.role}">
                                     <div class="message-role">${msg.role}</div>
                                     ${thinkingHtml}
-                                    <div class="message-content">${escapeHtml(content)}</div>
+                                    ${contentHtml}
                                     ${toolCallsHtml}
                                 </div>
                             `;

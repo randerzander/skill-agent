@@ -24,12 +24,6 @@ def test_skill_loader():
     assert 'description' in greet_skill, "Expected description in metadata"
     print("✓ Skill metadata correct")
     
-    # Check XML generation
-    xml = loader.get_skills_xml()
-    assert '<available_skills>' in xml, "Expected XML format"
-    assert '<name>greet</name>' in xml, "Expected greet skill in XML"
-    print("✓ Skills XML format correct")
-    
     return loader
 
 def test_skill_activation(loader):

@@ -24,10 +24,10 @@ MAX_PING_RETRIES = 3  # Retry pinging with same proxy if it fails
 # Spinner characters
 SPINNER_CHARS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
-# Scratch directory for caching
-SCRATCH_DIR = Path("scratch")
-PROXY_LIST_FILE = SCRATCH_DIR / "proxy_list.txt"
-LAST_PROXY_FILE = SCRATCH_DIR / "proxy_ip.txt"
+# Data directory for persistent proxy cache
+DATA_DIR = Path("data")
+PROXY_LIST_FILE = DATA_DIR / "proxy_list.txt"
+LAST_PROXY_FILE = DATA_DIR / "proxy_ip.txt"
 
 
 def fetch_proxy_list():
@@ -57,7 +57,7 @@ def fetch_proxy_list():
                 proxies.append(line)
         
         # Save to cache
-        SCRATCH_DIR.mkdir(exist_ok=True)
+        DATA_DIR.mkdir(exist_ok=True)
         with open(PROXY_LIST_FILE, 'w') as f:
             f.write('\n'.join(proxies))
         
@@ -84,7 +84,7 @@ def get_last_working_proxy():
 def save_last_working_proxy(proxy):
     """Save the working proxy to cache"""
     try:
-        SCRATCH_DIR.mkdir(exist_ok=True)
+        DATA_DIR.mkdir(exist_ok=True)
         with open(LAST_PROXY_FILE, 'w') as f:
             f.write(proxy)
     except Exception as e:

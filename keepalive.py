@@ -146,7 +146,7 @@ def ping_service_via_proxy(proxy):
 
 def find_working_proxy(proxies, start_index=0):
     """Find a working proxy starting from the given index"""
-    max_proxies_to_test = 500
+    max_proxies_to_test = 5000
     proxies_tested = 0
     
     print(f"[Keepalive] Searching for working proxy (starting at index {start_index})...")

@@ -71,6 +71,7 @@ def _load_config():
 def _chunk_text(text, tokens_per_chunk=2048):
     """Split text into chunks by token count using sentence transformers tokenizer"""
     try:
+        # Conditional import - only import if needed
         from sentence_transformers import SentenceTransformer
         
         config = _load_config()
@@ -87,8 +88,9 @@ def _chunk_text(text, tokens_per_chunk=2048):
             chunks.append(chunk_text)
         
         return chunks
-    except Exception as e:
+    except (ImportError, Exception):
         # Fallback: simple character-based chunking (rough estimate: 4 chars per token)
+        # Used when sentence-transformers is not installed or if there's any error
         chars_per_chunk = tokens_per_chunk * 4
         return [text[i:i + chars_per_chunk] for i in range(0, len(text), chars_per_chunk)]
 
@@ -101,6 +103,7 @@ def _embed_and_store(url, text, tokens_per_chunk=2048):
     total_start = time.time()
     
     try:
+        # Conditional imports - only import if needed (when retrieval is enabled)
         import lancedb
         from sentence_transformers import SentenceTransformer
         import hashlib
@@ -147,7 +150,9 @@ def _embed_and_store(url, text, tokens_per_chunk=2048):
         timings['total'] = time.time() - total_start
         
         return table_name, len(chunks), timings
-        
+    
+    except ImportError:
+        raise Exception(f"Failed to embed and store: Missing required dependencies (sentence-transformers or lancedb). Install them if you want to enable retrieval: pip install sentence-transformers lancedb")
     except Exception as e:
         raise Exception(f"Failed to embed and store: {str(e)}")
 
@@ -155,6 +160,7 @@ def _embed_and_store(url, text, tokens_per_chunk=2048):
 def _retrieve_relevant_chunks(table_name, query, top_k=2):
     """Retrieve most relevant chunks for a query"""
     try:
+        # Conditional imports - only import if needed (when retrieval is enabled)
         import lancedb
         from sentence_transformers import SentenceTransformer
         
@@ -177,7 +183,9 @@ def _retrieve_relevant_chunks(table_name, query, top_k=2):
         chunks = [r['text'] for r in results]
         
         return chunks
-        
+    
+    except ImportError:
+        raise Exception(f"Failed to retrieve chunks: Missing required dependencies (sentence-transformers or lancedb). Install them if you want to enable retrieval: pip install sentence-transformers lancedb")
     except Exception as e:
         raise Exception(f"Failed to retrieve chunks: {str(e)}")
 

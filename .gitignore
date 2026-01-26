@@ -34,3 +34,6 @@ wheels/
 *~
 logs/
 scratch/
+
+# Generated data files
+data/proxy_list.txt

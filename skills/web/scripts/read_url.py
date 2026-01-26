@@ -88,12 +88,9 @@ def _chunk_text(text, tokens_per_chunk=2048):
             chunks.append(chunk_text)
         
         return chunks
-    except ImportError as e:
-        # If sentence-transformers is not installed, use fallback
-        chars_per_chunk = tokens_per_chunk * 4
-        return [text[i:i + chars_per_chunk] for i in range(0, len(text), chars_per_chunk)]
-    except Exception as e:
+    except (ImportError, Exception):
         # Fallback: simple character-based chunking (rough estimate: 4 chars per token)
+        # Used when sentence-transformers is not installed or if there's any error
         chars_per_chunk = tokens_per_chunk * 4
         return [text[i:i + chars_per_chunk] for i in range(0, len(text), chars_per_chunk)]
 

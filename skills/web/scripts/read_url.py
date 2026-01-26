@@ -151,7 +151,7 @@ def _embed_and_store(url, text, tokens_per_chunk=2048):
         
         return table_name, len(chunks), timings
     
-    except ImportError as e:
+    except ImportError:
         raise Exception(f"Failed to embed and store: Missing required dependencies (sentence-transformers or lancedb). Install them if you want to enable retrieval: pip install sentence-transformers lancedb")
     except Exception as e:
         raise Exception(f"Failed to embed and store: {str(e)}")
@@ -184,7 +184,7 @@ def _retrieve_relevant_chunks(table_name, query, top_k=2):
         
         return chunks
     
-    except ImportError as e:
+    except ImportError:
         raise Exception(f"Failed to retrieve chunks: Missing required dependencies (sentence-transformers or lancedb). Install them if you want to enable retrieval: pip install sentence-transformers lancedb")
     except Exception as e:
         raise Exception(f"Failed to retrieve chunks: {str(e)}")

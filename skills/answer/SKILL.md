@@ -14,4 +14,4 @@ Use this skill to reflect on all gathered information and provide a final answer
 
 OR
 
-3. Use the global deactivate, then activate_planning to create more subquestions or tasks
+3. Use the global skill_switch tool with skill_name='planning' to create more subquestions or tasks

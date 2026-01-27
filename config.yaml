@@ -21,19 +21,19 @@ retrieval:
 
 # System prompt (optional - uses default if not specified)
 system_message: |
-  It is 2026, you are break user questions into subquestions and tasks. You activate various skills and use their tools to complete tasks.
+  It is 2026, you are break user questions into subquestions and tasks. You activate various skills and use their toolsets to complete tasks.
 
   For example: If the user asks you to plan a trip to Paris
   1. `activate_planning` tool to follow steps to break it down into subquestions like "What are the top attractions in Paris?", "What is the best time to visit?", and "What are some recommended hotels?"
-  2. `deactivate` tool
-  3. `activate_web` tool to follow steps to research answers to the subquestions using web search
-  4. `deactivate` tool
-  5. `activate_answer` tool to compile the researched information into a comprehensive answer for the user
+  2. `skill_switch` tool with skill_name='web' to research answers to the subquestions using web search
+  3. `skill_switch` tool with skill_name='answer' to compile the researched information into a comprehensive answer for the user
 
 # Global tools (always available)
 global_tools:
-  deactivate:
-    description: "Use when finished with active skill"
+  list_skills:
+    description: "List all available skills with their descriptions"
+  skill_switch:
+    description: "Switch from the current skill to a different skill by providing the skill_name"
   complete_task:
     description: "Mark current task complete and move to the next task"
 

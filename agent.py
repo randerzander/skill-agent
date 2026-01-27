@@ -570,13 +570,31 @@ Activate available skills to complete tasks. After each skill, consider whether 
             {
                 "type": "function",
                 "function": {
-                    "name": "deactivate",
-                    "description": global_tools_config.get('deactivate', {}).get('description', 
-                        "Deactivate the current skill and return to skill selection mode"),
+                    "name": "list_skills",
+                    "description": global_tools_config.get('list_skills', {}).get('description', 
+                        "List all available skills with their descriptions"),
                     "parameters": {
                         "type": "object",
                         "properties": {},
                         "required": []
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "skill_switch",
+                    "description": global_tools_config.get('skill_switch', {}).get('description',
+                        "Switch from the current skill to a different skill"),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "skill_name": {
+                                "type": "string",
+                                "description": "The name of the skill to switch to (e.g., 'web', 'planning', 'answer')"
+                            }
+                        },
+                        "required": ["skill_name"]
                     }
                 }
             },
@@ -677,6 +695,14 @@ Activate available skills to complete tasks. After each skill, consider whether 
         Returns:
             The final response from the agent
         """
+        # Clean scratch directory at the beginning of each run
+        import shutil
+        if SCRATCH_DIR.exists():
+            shutil.rmtree(SCRATCH_DIR)
+        SCRATCH_DIR.mkdir(exist_ok=True)
+        (SCRATCH_DIR / "incomplete_tasks").mkdir(exist_ok=True)
+        (SCRATCH_DIR / "completed_tasks").mkdir(exist_ok=True)
+        
         # Reset conversation history for new query
         system_message = self.messages[0]  # Preserve system message
         self.messages = [system_message]
@@ -987,44 +1013,106 @@ Activate available skills to complete tasks. After each skill, consider whether 
                                 })
                         
                         # Handle global tools
-                        elif function_name == "deactivate":
-                            # Deactivate current skill
+                        elif function_name == "list_skills":
+                            # List all available skills
+                            skills_list = []
+                            for skill_name, skill in self.skill_loader.skills.items():
+                                skills_list.append(f"- **{skill_name}**: {skill['description']}")
+                            
+                            skills_message = "Available skills:\n\n" + "\n".join(skills_list)
+                            
+                            console.print(f"[cyan]ℹ[/cyan] Listed {len(skills_list)} available skill(s)")
+                            
+                            self._log_message({
+                                "type": "tool_execution",
+                                "script": "list_skills",
+                                "result": {"result": skills_message}
+                            })
+                            
+                            self.messages.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": skills_message
+                            })
+                        
+                        elif function_name == "skill_switch":
+                            # Switch to a different skill
+                            new_skill_name = function_args.get('skill_name')
+                            
+                            if not new_skill_name:
+                                self.messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "content": "Error: skill_name parameter is required"
+                                })
+                                continue
+                            
+                            if new_skill_name not in self.skill_loader.skills:
+                                available = ", ".join(self.skill_loader.skills.keys())
+                                error_msg = f"Error: Skill '{new_skill_name}' not found. Available skills: {available}"
+                                
+                                console.print(f"[red]✗[/red] Skill not found: [bold]{new_skill_name}[/bold]")
+                                
+                                self._log_message({
+                                    "type": "tool_execution",
+                                    "script": "skill_switch",
+                                    "result": {"error": error_msg}
+                                })
+                                
+                                self.messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "content": error_msg
+                                })
+                                continue
+                            
+                            # Log deactivation of old skill if one was active
                             if active_skill:
                                 console.print(f"[yellow]↩[/yellow] Deactivated skill: [bold]{active_skill}[/bold]")
-                                
                                 self._log_message({
                                     "type": "skill_deactivated",
                                     "skill_name": active_skill
                                 })
-                                
-                                # Log tool execution for UI spinner
-                                self._log_message({
-                                    "type": "tool_execution",
-                                    "script": "deactivate",
-                                    "result": {"result": f"Skill '{active_skill}' deactivated"}
-                                })
-                                
-                                active_skill = None
-                                active_tools = []
-                                
-                                self.messages.append({
-                                    "role": "tool",
-                                    "tool_call_id": tool_call.id,
-                                    "content": "Skill deactivated. You can now activate a different skill."
-                                })
-                            else:
-                                # Log tool execution even if no skill active
-                                self._log_message({
-                                    "type": "tool_execution",
-                                    "script": "deactivate",
-                                    "result": {"result": "No skill is currently active"}
-                                })
-                                
-                                self.messages.append({
-                                    "role": "tool",
-                                    "tool_call_id": tool_call.id,
-                                    "content": "No skill is currently active."
-                                })
+                            
+                            # Activate the new skill
+                            skill_content = self.skill_loader.activate_skill(new_skill_name)
+                            active_skill = new_skill_name
+                            active_tools = self.skill_loader.get_skill_tools(new_skill_name)
+                            
+                            # Calculate token estimate
+                            token_estimate = len(skill_content) // 4
+                            
+                            console.print(f"[green]✓[/green] Switched to skill: [bold]{new_skill_name}[/bold] [dim](~{token_estimate} tokens added)[/dim]")
+                            
+                            # Log skill activation
+                            self._log_message({
+                                "type": "skill_activated",
+                                "skill_name": new_skill_name,
+                                "tools_count": len(active_tools),
+                                "tokens_added": token_estimate
+                            })
+                            
+                            # Include CURRENT_TASK if it exists
+                            current_task_file = SCRATCH_DIR / "CURRENT_TASK.txt"
+                            current_task_info = ""
+                            
+                            if current_task_file.exists():
+                                try:
+                                    with open(current_task_file, 'r') as f:
+                                        current_task_data = json.load(f)
+                                    
+                                    if current_task_data.get('status') == 'active':
+                                        current_task_info = f"\n\n--- CURRENT TASK ---\nTask #{current_task_data['task_number']}: {current_task_data['description']}\n---"
+                                except:
+                                    pass  # If file is malformed, skip
+                            
+                            activation_msg = f"Switched to skill '{new_skill_name}'.\n\nInstructions:\n{skill_content}\n\nYou can access tools from this skill.{current_task_info}"
+                            
+                            self.messages.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": activation_msg
+                            })
                         
                         elif function_name == "complete_task":
                             # Complete a task and save its result
@@ -1255,7 +1343,7 @@ Activate available skills to complete tasks. After each skill, consider whether 
                     reminder_msg = f"""You have {len(incomplete_tasks)} incomplete task(s):
 {chr(10).join([f"- Task {t.replace('task_', '').replace('.txt', '')}" for t in incomplete_tasks])}
 
-You must complete all tasks before finishing. Use the deactivate tool to switch skills, then activate the appropriate skill (e.g., activate_web) to work on these tasks."""
+You must complete all tasks before finishing. Use the skill_switch tool to switch to an appropriate skill (e.g., skill_switch with skill_name='web') to work on these tasks."""
                     
                     self.messages.append({
                         "role": "user",

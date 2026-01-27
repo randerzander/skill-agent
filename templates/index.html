@@ -210,6 +210,40 @@
             padding: 0;
         }
         
+        .result-content table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 12px;
+            overflow: hidden;
+            border-radius: 6px;
+        }
+        
+        .result-content th {
+            background: rgba(255, 140, 0, 0.2);
+            color: #ffa500;
+            padding: 10px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid rgba(255, 140, 0, 0.3);
+        }
+        
+        .result-content td {
+            padding: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .result-content tbody tr:nth-child(odd) {
+            background: rgba(0, 0, 0, 0.15);
+        }
+        
+        .result-content tbody tr:nth-child(even) {
+            background: rgba(255, 255, 255, 0.03);
+        }
+        
+        .result-content tbody tr:hover {
+            background: rgba(255, 140, 0, 0.08);
+        }
+        
         .logs-section {
             flex: 1;
             min-height: 400px;

@@ -505,6 +505,7 @@ class AgentSkillsFramework:
     def __init__(self, api_key: str = None, config_path: str = "config.yaml", event_callback=None):
         # Load configuration
         config = self._load_config(config_path)
+        self.config = config  # Store config for later use
         
         # Event callback for real-time updates (used by web UI)
         self.event_callback = event_callback
@@ -517,12 +518,16 @@ class AgentSkillsFramework:
         (SCRATCH_DIR / "incomplete_tasks").mkdir(exist_ok=True)
         (SCRATCH_DIR / "completed_tasks").mkdir(exist_ok=True)
         
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
-        if not self.api_key:
-            raise ValueError("OpenRouter API key not found. Set OPENROUTER_API_KEY environment variable.")
-        
         # Initialize OpenAI client with config
         openai_config = config.get('openai', {})
+        
+        # Get API key from config or fallback to env var
+        api_key_env = openai_config.get('api_key_env', 'OPENROUTER_API_KEY')
+        self.api_key = api_key or os.getenv(api_key_env)
+        
+        if not self.api_key:
+            raise ValueError(f"API key not found. Set {api_key_env} environment variable.")
+        
         self.client = OpenAI(
             base_url=openai_config.get('base_url', 'https://openrouter.ai/api/v1'),
             api_key=self.api_key
@@ -684,17 +689,22 @@ Activate available skills to complete tasks. After each skill, consider whether 
             # Don't fail on logging errors
             console.print(f"[dim red]Warning: Failed to log: {e}[/dim red]")
     
-    def run(self, user_input: str, max_iterations: int = 15) -> str:
+    def run(self, user_input: str, max_iterations: int = None) -> str:
         """
         Main agent loop that processes user input through skill selection and execution
         
         Args:
             user_input: The user's request
-            max_iterations: Maximum number of iterations to prevent infinite loops
+            max_iterations: Maximum number of iterations to prevent infinite loops (defaults to config value or 30)
         
         Returns:
             The final response from the agent
         """
+        # Get max_iterations from config if not provided
+        if max_iterations is None:
+            agent_config = self.config.get('agent', {})
+            max_iterations = agent_config.get('max_iterations', 30)
+        
         # Clean scratch directory at the beginning of each run
         import shutil
         if SCRATCH_DIR.exists():
@@ -763,6 +773,8 @@ Activate available skills to complete tasks. After each skill, consider whether 
         while iteration < max_iterations:
             iteration += 1
             
+            console.print(f"[dim]═══ Iteration {iteration}/{max_iterations} ═══[/dim]")
+            
             # Prepare tools based on active skill
             # Global tools are ALWAYS available
             # If no skill is active, offer the activate_skill tools + global tools
@@ -797,15 +809,19 @@ Activate available skills to complete tasks. After each skill, consider whether 
                         
                         # Make the API call in a way that allows us to update the display
                         response = None
+                        api_error = None
                         import threading
                         
                         def make_call():
-                            nonlocal response
-                            response = self.client.chat.completions.create(
-                                model=self.model,
-                                messages=self.messages,
-                                tools=tools
-                            )
+                            nonlocal response, api_error
+                            try:
+                                response = self.client.chat.completions.create(
+                                    model=self.model,
+                                    messages=self.messages,
+                                    tools=tools
+                                )
+                            except Exception as e:
+                                api_error = e
                         
                         thread = threading.Thread(target=make_call)
                         thread.start()
@@ -823,6 +839,13 @@ Activate available skills to complete tasks. After each skill, consider whether 
                             time.sleep(0.1)
                         
                         thread.join()
+                        
+                        # Check for errors
+                        if api_error:
+                            raise api_error
+                        
+                        if response is None:
+                            raise Exception("API call failed to return a response")
                         
                         # Get actual token counts from response
                         if hasattr(response, 'usage') and response.usage:
@@ -1338,11 +1361,24 @@ Activate available skills to complete tasks. After each skill, consider whether 
                 # No tool calls - check if there are incomplete tasks before allowing completion
                 incomplete_dir = SCRATCH_DIR / "incomplete_tasks"
                 incomplete_tasks = []
+                
+                console.print(f"[dim]Debug: Checking for incomplete tasks in {incomplete_dir}[/dim]")
+                console.print(f"[dim]Debug: Directory exists: {incomplete_dir.exists()}[/dim]")
+                
                 if incomplete_dir.exists():
-                    incomplete_tasks = sorted([
-                        f for f in os.listdir(incomplete_dir) 
-                        if f.startswith("task_") and f.endswith(".txt")
-                    ])
+                    try:
+                        all_files = os.listdir(incomplete_dir)
+                        console.print(f"[dim]Debug: All files in dir: {all_files}[/dim]")
+                        
+                        incomplete_tasks = sorted([
+                            f for f in all_files 
+                            if f.startswith("task_") and f.endswith(".txt")
+                        ])
+                        console.print(f"[dim]Debug: Filtered incomplete tasks: {incomplete_tasks}[/dim]")
+                    except Exception as e:
+                        console.print(f"[red]Error listing incomplete tasks: {e}[/red]")
+                else:
+                    console.print(f"[yellow]Warning: Incomplete tasks directory does not exist![/yellow]")
                 
                 if incomplete_tasks:
                     # There are incomplete tasks - don't allow completion
@@ -1368,6 +1404,38 @@ You must complete all tasks before finishing. Use the skill_switch tool to switc
                     # Agent just called a tool in answer skill, let it continue to formulate response
                     console.print(f"[cyan]ℹ[/cyan] All tasks complete, waiting for final answer submission...")
                     continue
+                
+                # If not in answer skill, force switch to answer skill
+                if active_skill != 'answer':
+                    console.print(f"[yellow]⚠[/yellow] All tasks complete but not in answer skill. Forcing switch to answer skill...")
+                    
+                    # Auto-activate answer skill
+                    if "answer" in self.skill_loader.skills:
+                        skill_content = self.skill_loader.activate_skill("answer")
+                        active_skill = "answer"
+                        active_tools = self.skill_loader.get_skill_tools("answer")
+                        
+                        token_estimate = len(skill_content) // 4
+                        console.print(f"[green]✓[/green] Skill auto-activated: [bold]answer[/bold] [dim](~{token_estimate} tokens added)[/dim]")
+                        
+                        # Log the auto-activation
+                        self._log_message({
+                            "type": "skill_activated",
+                            "skill_name": "answer",
+                            "tools_count": len(active_tools),
+                            "tokens_added": token_estimate,
+                            "auto_activated": True
+                        })
+                        
+                        # Add activation message to force agent to use answer skill
+                        activation_msg = f"All tasks are complete.\n\nSkill 'answer' activated.\n\nInstructions:\n{skill_content}\n\nYou must now synthesize the results and submit your final answer."
+                        self.messages.append({
+                            "role": "user",
+                            "content": activation_msg
+                        })
+                        
+                        # Continue to next iteration
+                        continue
                 
                 # No incomplete tasks - return the response
                 final_response = message.content if message.content else "I've completed the task."
@@ -1430,12 +1498,17 @@ You must complete all tasks before finishing. Use the skill_switch tool to switc
                 return f"Error: {str(e)}"
         
         # Max iterations reached - extract best response from history
+        console.print(f"[red]✗[/red] Maximum iterations ({max_iterations}) reached")
         final_response = "Maximum iterations reached. Unable to complete the request."
         
-        # Try to find the last assistant message with content
+        # Try to find the last assistant message with actual content (not SKILL.md activations)
         for msg in reversed(self.messages):
             if msg.get("role") == "assistant" and msg.get("content"):
-                final_response = msg["content"]
+                content = msg["content"]
+                # Skip SKILL.md activation messages
+                if "Skill '" in content and "activated" in content and "Instructions:" in content:
+                    continue
+                final_response = content
                 break
         
         # Verify links in the response if enabled

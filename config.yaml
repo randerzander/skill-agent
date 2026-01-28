@@ -3,10 +3,19 @@
 
 # OpenAI API Configuration
 openai:
-  base_url: "https://openrouter.ai/api/v1"
-  model: "nvidia/nemotron-3-nano-30b-a3b:free"
-  #model: "moonshotai/kimi-k2:free"
-  #model: "meta-llama/llama-3.3-70b-instruct:free"
+  # NVIDIA Direct API (recommended - higher rate limits)
+  base_url: "https://integrate.api.nvidia.com/v1"
+  model: "nvidia/nemotron-3-nano-30b-a3b"
+  api_key_env: "NVIDIA_API_KEY"
+  
+  # OpenRouter API (alternative - free models but lower rate limits)
+  # base_url: "https://openrouter.ai/api/v1"
+  # model: "nvidia/nemotron-3-nano-30b-a3b:free"
+  # api_key_env: "OPENROUTER_API_KEY"
+  
+  # Other model options:
+  # model: "moonshotai/kimi-k2:free"
+  # model: "meta-llama/llama-3.3-70b-instruct:free"
 
 # Judge model for evaluations
 judge:
@@ -39,7 +48,7 @@ global_tools:
 
 # Agent Configuration
 agent:
-  max_iterations: 15
+  max_iterations: 30
 
 # Skills Configuration
 skills:

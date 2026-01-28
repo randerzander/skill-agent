@@ -921,14 +921,18 @@
                     break;
                     
                 case 'tool_call':
-                    addLog('tool', `🛠️ Calling tool: ${event.data.tool_name}`, event.timestamp, elapsed, true);
+                    addLog('tool', `🛠️ Calling tool: ${event.data.tool_name}`, event.timestamp, elapsed, true, event.data.tool_name);
                     const toolItem = addToolToList(event.data, event.timestamp);
                     toolItem.classList.add('active');
                     toolItem.dataset.toolName = event.data.tool_name;
                     break;
                     
                 case 'tool_result':
-                    removeLastSpinner('tool');
+                    // Try to remove spinner for specific tool first
+                    if (!removeSpinnerForTool(event.data.tool_name)) {
+                        // Fallback to removing last tool spinner
+                        removeLastSpinner('tool');
+                    }
                     markLastToolInactive(event.data.tool_name);
                     const resultStr = JSON.stringify(event.data.result).substring(0, 100);
                     const resultIcon = event.data.error ? '✗' : '✓';
@@ -1001,14 +1005,20 @@
             // Show the result section
             resultSection.style.display = 'block';
             
+            // Get the user's original query
+            const userQuery = document.getElementById('userInput').value.trim();
+            
             // Configure marked to open links in new tab
             marked.setOptions({
                 breaks: true,
                 gfm: true
             });
             
+            // Prepend user query to content
+            const fullContent = `**User Query:** ${userQuery}\n\n---\n\n${content}`;
+            
             // Render markdown to HTML
-            const htmlContent = marked.parse(content);
+            const htmlContent = marked.parse(fullContent);
             
             // Set the rendered HTML content
             resultContent.innerHTML = htmlContent;
@@ -1023,7 +1033,7 @@
             resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
         
-        function addLog(type, message, timestamp, elapsed, spinner = false) {
+        function addLog(type, message, timestamp, elapsed, spinner = false, toolName = null) {
             const logsDiv = document.getElementById('logs');
             
             // Remove empty state if present
@@ -1035,9 +1045,12 @@
             const logEntry = document.createElement('div');
             logEntry.className = `log-entry ${type}`;
             
-            // Add data attribute if this is a spinner that needs to be updated
+            // Add data attributes for spinner tracking
             if (spinner) {
                 logEntry.dataset.spinner = type;
+                if (toolName) {
+                    logEntry.dataset.toolName = toolName;
+                }
             }
             
             const icon = spinner ? '<span class="spinner"></span>' : '<span class="icon">•</span>';
@@ -1061,6 +1074,18 @@
             }
             
             return logEntry;
+        }
+        
+        function removeSpinnerForTool(toolName) {
+            const logsDiv = document.getElementById('logs');
+            // Find spinner with matching tool name
+            const spinners = logsDiv.querySelectorAll(`[data-spinner="tool"][data-tool-name="${toolName}"]`);
+            if (spinners.length > 0) {
+                const lastSpinner = spinners[spinners.length - 1];
+                lastSpinner.remove();
+                return true;
+            }
+            return false;
         }
         
         function removeLastSpinner(spinnerType) {

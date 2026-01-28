@@ -242,7 +242,7 @@ class WebAgentWrapper:
         
         # Use the agent's run method which has all the correct logic
         try:
-            response = self.agent.run(user_input, max_iterations=15)
+            response = self.agent.run(user_input)  # Will use config value
             
             # Don't manually add final_response - agent's _log_message handles it
             

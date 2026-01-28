@@ -1092,6 +1092,15 @@ Activate available skills to complete tasks. After each skill, consider whether 
                                 "tokens_added": token_estimate
                             })
                             
+                            # Log tool execution result for UI spinner
+                            self._log_message({
+                                "type": "tool_execution",
+                                "skill": None,
+                                "script": "skill_switch",
+                                "params": {"skill_name": new_skill_name},
+                                "result": {"result": f"Switched to {new_skill_name}"}
+                            })
+                            
                             # Include CURRENT_TASK if it exists
                             current_task_file = SCRATCH_DIR / "CURRENT_TASK.txt"
                             current_task_info = ""
@@ -1351,6 +1360,13 @@ You must complete all tasks before finishing. Use the skill_switch tool to switc
                     })
                     
                     # Continue to next iteration
+                    continue
+                
+                # No incomplete tasks - check if we need to allow final answer submission
+                # If answer skill is active and we just returned tool results, give agent one more turn
+                if active_skill == 'answer' and message.content is None:
+                    # Agent just called a tool in answer skill, let it continue to formulate response
+                    console.print(f"[cyan]ℹ[/cyan] All tasks complete, waiting for final answer submission...")
                     continue
                 
                 # No incomplete tasks - return the response

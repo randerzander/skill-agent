@@ -10,7 +10,7 @@ openai:
   
   # NVIDIA Direct API (alternative - higher rate limits)
   # base_url: "https://integrate.api.nvidia.com/v1"
-  # model: "nvidia/llama-3.1-nemotron-70b-instruct"
+  # model: "nvidia/nemotron-3-nano-30b-a3b"
   # api_key_env: "NVIDIA_API_KEY"
   
   # Other model options:

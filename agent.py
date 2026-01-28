@@ -419,6 +419,40 @@ class SkillLoader:
             "required": required
         }
     
+    def _find_tool_in_other_skills(self, tool_name: str, exclude_skill: str = None) -> tuple:
+        """
+        Search for a tool function across all skills.
+        
+        Args:
+            tool_name: Name of the tool/function to find
+            exclude_skill: Skill to exclude from search (usually the one that failed)
+        
+        Returns:
+            Tuple of (skill_name, function) if found, else (None, None)
+        """
+        import importlib.util
+        
+        for skill_name, skill in self.skills.items():
+            if skill_name == exclude_skill:
+                continue
+            
+            skill_path = Path(skill['path'])
+            tools_file = skill_path / "scripts" / "tools.py"
+            
+            if tools_file.exists():
+                try:
+                    spec = importlib.util.spec_from_file_location(f"{skill_name}.tools", tools_file)
+                    if spec and spec.loader:
+                        module = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(module)
+                        
+                        if hasattr(module, tool_name):
+                            return (skill_name, getattr(module, tool_name))
+                except Exception:
+                    continue
+        
+        return (None, None)
+    
     def execute_skill_script(self, skill_name: str, script_name: str, parameters: Dict[str, Any] = None, live_display = None) -> Dict[str, Any]:
         """Execute a specific skill script/function with given parameters"""
         if skill_name not in self.skills:
@@ -458,6 +492,32 @@ class SkillLoader:
         # Fallback to individual script files (legacy)
         script_path = scripts_dir / f"{script_name}.py"
         if not script_path.exists():
+            # Try to find the tool in other skills
+            found_skill, found_func = self._find_tool_in_other_skills(script_name, exclude_skill=skill_name)
+            
+            if found_func:
+                try:
+                    # Call the function from the other skill
+                    result = found_func(**parameters) if parameters else found_func()
+                    
+                    # Ensure result is a dict
+                    if not isinstance(result, dict):
+                        result = {"result": result}
+                    
+                    # Add a note about cross-skill usage
+                    if "result" in result:
+                        if isinstance(result["result"], dict):
+                            result["result"]["_note"] = f"FYI: You used '{script_name}' from the '{found_skill}' skill. Switch to that skill for more context about this tool."
+                        else:
+                            result["_note"] = f"FYI: You used '{script_name}' from the '{found_skill}' skill. Switch to that skill for more context about this tool."
+                    else:
+                        result["_note"] = f"FYI: You used '{script_name}' from the '{found_skill}' skill. Switch to that skill for more context about this tool."
+                    
+                    return result
+                except Exception as e:
+                    error_details = traceback.format_exc()
+                    return {"error": f"Function execution failed: {str(e)}", "traceback": error_details}
+            
             return {"error": f"Script '{script_name}' not found for skill '{skill_name}'"}
         
         try:
@@ -512,6 +572,44 @@ class AgentSkillsFramework:
         except:
             pass
         return ""
+    
+    def _safe_parse_json(self, json_str: str) -> dict:
+        """
+        Safely parse JSON that might be malformed.
+        
+        Args:
+            json_str: JSON string to parse
+        
+        Returns:
+            Parsed dict or original string on error
+        """
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError as e:
+            # Try to fix common issues
+            # Sometimes LLMs return multiple JSON objects or extra text
+            try:
+                # Try to extract just the first valid JSON object
+                import re
+                # Find first { and its matching }
+                first_brace = json_str.find('{')
+                if first_brace != -1:
+                    brace_count = 0
+                    for i, char in enumerate(json_str[first_brace:], start=first_brace):
+                        if char == '{':
+                            brace_count += 1
+                        elif char == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                # Found matching brace
+                                return json.loads(json_str[first_brace:i+1])
+            except:
+                pass
+            
+            # If all fixes fail, return the string as-is wrapped in a dict
+            console.print(f"[yellow]Warning: Failed to parse tool arguments JSON: {e}[/yellow]")
+            console.print(f"[dim]Arguments string: {json_str[:200]}...[/dim]")
+            return {"_raw": json_str, "_parse_error": str(e)}
     
     def __init__(self, api_key: str = None, config_path: str = "config.yaml", event_callback=None):
         # Load configuration
@@ -890,7 +988,7 @@ Activate available skills to complete tasks. After each skill, consider whether 
                         {
                             "id": tc.id,
                             "function": tc.function.name,
-                            "arguments": json.loads(tc.function.arguments)
+                            "arguments": self._safe_parse_json(tc.function.arguments)
                         } for tc in (message.tool_calls or [])
                     ] if message.tool_calls else None
                 }
@@ -963,7 +1061,20 @@ Activate available skills to complete tasks. After each skill, consider whether 
                     # Execute each tool call
                     for tool_call in message.tool_calls:
                         function_name = tool_call.function.name
-                        function_args = json.loads(tool_call.function.arguments)
+                        function_args = self._safe_parse_json(tool_call.function.arguments)
+                        
+                        # Check if parsing failed
+                        if "_parse_error" in function_args:
+                            # Add error response
+                            self.messages.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": json.dumps({
+                                    "error": f"Failed to parse tool arguments: {function_args['_parse_error']}",
+                                    "raw_arguments": function_args.get("_raw", "")[:500]
+                                })
+                            })
+                            continue
                         
                         # Check if this is a skill activation request (new format: activate_SKILLNAME)
                         if function_name.startswith("activate_"):

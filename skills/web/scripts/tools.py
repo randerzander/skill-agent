@@ -25,6 +25,87 @@ from utils import sanitize_filename, ensure_scratch_dir
 # UTILITY FUNCTIONS
 # ============================================================================
 
+def _truncate_json_strings(data, max_string_length=1000):
+    """
+    Recursively truncate long strings in JSON data structure.
+    
+    Args:
+        data: JSON data (dict, list, or primitive)
+        max_string_length: Maximum length for string values
+    
+    Returns:
+        Truncated copy of the data
+    """
+    if isinstance(data, dict):
+        return {k: _truncate_json_strings(v, max_string_length) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [_truncate_json_strings(item, max_string_length) for item in data]
+    elif isinstance(data, str):
+        if len(data) > max_string_length:
+            return data[:max_string_length] + f"... [truncated, {len(data)-max_string_length} more chars]"
+        return data
+    else:
+        return data
+
+
+def _summarize_json_structure(data, max_depth=3, current_depth=0):
+    """
+    Create a structural summary of JSON data showing keys, types, and samples.
+    
+    Args:
+        data: JSON data to summarize
+        max_depth: Maximum nesting depth to analyze
+        current_depth: Current recursion depth
+    
+    Returns:
+        Dictionary describing the structure
+    """
+    if current_depth >= max_depth:
+        return {"type": type(data).__name__, "note": "max depth reached"}
+    
+    if isinstance(data, dict):
+        result = {
+            "type": "object",
+            "keys": list(data.keys()),
+            "key_count": len(data.keys())
+        }
+        # Sample first value's structure
+        if data:
+            first_key = list(data.keys())[0]
+            result["sample_value"] = _summarize_json_structure(data[first_key], max_depth, current_depth + 1)
+        return result
+    
+    elif isinstance(data, list):
+        result = {
+            "type": "array",
+            "length": len(data)
+        }
+        # Sample first item's structure
+        if data:
+            result["sample_item"] = _summarize_json_structure(data[0], max_depth, current_depth + 1)
+            
+            # If array of objects, collect all unique keys
+            if isinstance(data[0], dict):
+                all_keys = set()
+                for item in data[:100]:  # Sample first 100 items
+                    if isinstance(item, dict):
+                        all_keys.update(item.keys())
+                result["all_keys"] = sorted(all_keys)
+        return result
+    
+    elif isinstance(data, str):
+        return {"type": "string", "length": len(data), "preview": data[:50] if len(data) > 50 else data}
+    
+    elif isinstance(data, (int, float, bool)):
+        return {"type": type(data).__name__, "sample": data}
+    
+    elif data is None:
+        return {"type": "null"}
+    
+    else:
+        return {"type": type(data).__name__}
+
+
 def _save_to_scratch(url, title, content):
     """Save content to scratch directory as JSONL"""
     try:
@@ -268,6 +349,71 @@ def read_url(url: str) -> str:
         response = requests.get(url, timeout=30, headers=headers)
         response.raise_for_status()
         
+        # Check if response is JSON
+        content_type = response.headers.get('Content-Type', '')
+        is_json = 'application/json' in content_type
+        
+        if is_json:
+            # Handle JSON response
+            try:
+                json_data = response.json()
+                json_str = json.dumps(json_data, indent=2)
+                
+                # Always save raw JSON to scratch
+                _save_to_scratch(url, "[JSON-API]", json_str)
+                
+                # Check size and decide how to handle
+                MAX_JSON_SIZE = 50000  # ~50KB threshold
+                HUGE_JSON_SIZE = 500000  # ~500KB threshold for structural summary
+                
+                if len(json_str) > HUGE_JSON_SIZE:
+                    # Very large JSON - provide structural summary only
+                    structure = _summarize_json_structure(json_data)
+                    structure_str = json.dumps(structure, indent=2)
+                    
+                    return json.dumps({
+                        "result": {
+                            "url": url,
+                            "title": "[Large JSON Data]",
+                            "content": f"**Structure Summary** (original size: {len(json_str):,} bytes)\n\n```json\n{structure_str}\n```",
+                            "source_type": "json",
+                            "summarized": True,
+                            "original_size": len(json_str),
+                            "note": f"Very large JSON response ({len(json_str):,} bytes) - showing structural summary only. Full JSON saved to scratch/ directory. Use the 'coding' skill to write Python code to analyze the complete data."
+                        }
+                    })
+                
+                elif len(json_str) > MAX_JSON_SIZE:
+                    # Large JSON - truncate strings
+                    truncated_data = _truncate_json_strings(json_data, max_string_length=1000)
+                    truncated_str = json.dumps(truncated_data, indent=2)
+                    
+                    return json.dumps({
+                        "result": {
+                            "url": url,
+                            "title": "[JSON Data]",
+                            "content": truncated_str,
+                            "source_type": "json",
+                            "truncated": True,
+                            "original_size": len(json_str),
+                            "note": f"Large JSON response ({len(json_str):,} bytes) with strings truncated. Full data saved to scratch/ directory. Use the 'coding' skill to analyze complete JSON."
+                        }
+                    })
+                else:
+                    # Small JSON - return as-is
+                    return json.dumps({
+                        "result": {
+                            "url": url,
+                            "title": "[JSON Data]",
+                            "content": json_str,
+                            "source_type": "json"
+                        }
+                    })
+            except ValueError:
+                # Not valid JSON despite content-type
+                pass
+        
+        # Handle HTML/text content
         # Use readability to extract main content
         doc = Document(response.text)
         title = doc.title()

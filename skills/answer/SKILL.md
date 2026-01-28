@@ -7,6 +7,8 @@ description: Return a final answer to the user's query
 
 Use this skill to reflect on all gathered information and provide a final answer to the user's query.
 
+Cite relevant source URLs you used to formulate the answer.
+
 ## Workflow
 
 1. Review subquestions/tasks with `check_subtask_responses(query: str)`

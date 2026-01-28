@@ -21,6 +21,10 @@ openai:
 judge:
   model: "nvidia/nemotron-3-nano-30b-a3b:free"
 
+# Coding model for code generation
+coding:
+  model: "qwen/qwen3-coder:free"
+
 # RAG/Retrieval Configuration
 retrieval:
   enabled: false
@@ -56,4 +60,5 @@ skills:
   enabled:
     - planning
     - web
+    - coding
     - answer

@@ -3,15 +3,15 @@
 
 # OpenAI API Configuration
 openai:
-  # NVIDIA Direct API (recommended - higher rate limits)
-  base_url: "https://integrate.api.nvidia.com/v1"
-  model: "nvidia/nemotron-3-nano-30b-a3b"
-  api_key_env: "NVIDIA_API_KEY"
+  # OpenRouter API (default - free models but lower rate limits)
+  base_url: "https://openrouter.ai/api/v1"
+  model: "nvidia/nemotron-3-nano-30b-a3b:free"
+  api_key_env: "OPENROUTER_API_KEY"
   
-  # OpenRouter API (alternative - free models but lower rate limits)
-  # base_url: "https://openrouter.ai/api/v1"
-  # model: "nvidia/nemotron-3-nano-30b-a3b:free"
-  # api_key_env: "OPENROUTER_API_KEY"
+  # NVIDIA Direct API (alternative - higher rate limits)
+  # base_url: "https://integrate.api.nvidia.com/v1"
+  # model: "nvidia/llama-3.1-nemotron-70b-instruct"
+  # api_key_env: "NVIDIA_API_KEY"
   
   # Other model options:
   # model: "moonshotai/kimi-k2:free"

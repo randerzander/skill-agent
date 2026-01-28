@@ -21,6 +21,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.spinner import Spinner
 from rich.text import Text
+from utils import load_config, get_scratch_dir, get_task_dir, ensure_scratch_dir
 
 # Load environment variables
 load_dotenv()
@@ -32,7 +33,7 @@ console = Console()
 LOGS_DIR = Path("logs")
 LOGS_DIR.mkdir(exist_ok=True)
 
-SCRATCH_DIR = Path("scratch")
+SCRATCH_DIR = get_scratch_dir()
 SCRATCH_DIR.mkdir(exist_ok=True)
 
 class SkillLoader:
@@ -487,36 +488,41 @@ class SkillLoader:
 class AgentSkillsFramework:
     """Main framework for agent skills execution"""
     
-    def _load_config(self, config_path: str) -> Dict[str, Any]:
-        """Load configuration from YAML file"""
-        config_file = Path(config_path)
-        if not config_file.exists():
-            console.print(f"[yellow]Warning: Config file {config_path} not found, using defaults[/yellow]")
-            return {}
-        
-        try:
-            with open(config_file, 'r') as f:
-                config = yaml.safe_load(f)
-                return config or {}
-        except Exception as e:
-            console.print(f"[red]Error loading config: {e}[/red]")
-            return {}
-    
-    def __init__(self, api_key: str = None, config_path: str = "config.yaml", event_callback=None):
-        # Load configuration
-        config = self._load_config(config_path)
-        self.config = config  # Store config for later use
-        
-        # Event callback for real-time updates (used by web UI)
-        self.event_callback = event_callback
-        
-        # Clean scratch directory at the beginning of each run
+    def _initialize_scratch_directory(self):
+        """Initialize/reset scratch directory structure"""
         import shutil
         if SCRATCH_DIR.exists():
             shutil.rmtree(SCRATCH_DIR)
         SCRATCH_DIR.mkdir(exist_ok=True)
         (SCRATCH_DIR / "incomplete_tasks").mkdir(exist_ok=True)
         (SCRATCH_DIR / "completed_tasks").mkdir(exist_ok=True)
+    
+    def _get_current_task_info(self) -> str:
+        """Get current task info as formatted string, or empty string if none"""
+        current_task_file = SCRATCH_DIR / "CURRENT_TASK.txt"
+        if not current_task_file.exists():
+            return ""
+        
+        try:
+            with open(current_task_file, 'r') as f:
+                current_task_data = json.load(f)
+            
+            if current_task_data.get('status') == 'active':
+                return f"\n\n--- CURRENT TASK ---\nTask #{current_task_data['task_number']}: {current_task_data['description']}\n---"
+        except:
+            pass
+        return ""
+    
+    def __init__(self, api_key: str = None, config_path: str = "config.yaml", event_callback=None):
+        # Load configuration
+        config = load_config(config_path)
+        self.config = config  # Store config for later use
+        
+        # Event callback for real-time updates (used by web UI)
+        self.event_callback = event_callback
+        
+        # Clean scratch directory at the beginning of each run
+        self._initialize_scratch_directory()
         
         # Initialize OpenAI client with config
         openai_config = config.get('openai', {})
@@ -706,12 +712,7 @@ Activate available skills to complete tasks. After each skill, consider whether 
             max_iterations = agent_config.get('max_iterations', 30)
         
         # Clean scratch directory at the beginning of each run
-        import shutil
-        if SCRATCH_DIR.exists():
-            shutil.rmtree(SCRATCH_DIR)
-        SCRATCH_DIR.mkdir(exist_ok=True)
-        (SCRATCH_DIR / "incomplete_tasks").mkdir(exist_ok=True)
-        (SCRATCH_DIR / "completed_tasks").mkdir(exist_ok=True)
+        self._initialize_scratch_directory()
         
         # Reset conversation history for new query
         system_message = self.messages[0]  # Preserve system message
@@ -743,18 +744,7 @@ Activate available skills to complete tasks. After each skill, consider whether 
         console.print(f"[green]✓[/green] Skill auto-activated: [bold]planning[/bold] [dim](~{token_estimate} tokens added)[/dim]")
         
         # Include CURRENT_TASK if it exists
-        current_task_file = SCRATCH_DIR / "CURRENT_TASK.txt"
-        current_task_info = ""
-        
-        if current_task_file.exists():
-            try:
-                with open(current_task_file, 'r') as f:
-                    current_task_data = json.load(f)
-                
-                if current_task_data.get('status') == 'active':
-                    current_task_info = f"\n\n--- CURRENT TASK ---\nTask #{current_task_data['task_number']}: {current_task_data['description']}\n---"
-            except:
-                pass  # If file is malformed, skip
+        current_task_info = self._get_current_task_info()
         
         # Inject skill content and current task info into messages
         skill_message = f"Skill 'planning' activated.\n\nInstructions:\n{skill_content}\n\nYou can access tools from this skill.{current_task_info}"
@@ -999,19 +989,7 @@ Activate available skills to complete tasks. After each skill, consider whether 
                                 })
                                 
                                 # Add tool response confirming activation
-                                # Include CURRENT_TASK if it exists
-                                current_task_file = SCRATCH_DIR / "CURRENT_TASK.txt"
-                                current_task_info = ""
-                                
-                                if current_task_file.exists():
-                                    try:
-                                        with open(current_task_file, 'r') as f:
-                                            current_task_data = json.load(f)
-                                        
-                                        if current_task_data.get('status') == 'active':
-                                            current_task_info = f"\n\n--- CURRENT TASK ---\nTask #{current_task_data['task_number']}: {current_task_data['description']}\n---"
-                                    except:
-                                        pass  # If file is malformed, skip
+                                current_task_info = self._get_current_task_info()
                                 
                                 activation_msg = f"Skill '{skill_name}' activated.\n\nInstructions:\n{skill_content}\n\nYou can access tools from this skill.{current_task_info}"
                                 self.messages.append({
@@ -1125,18 +1103,7 @@ Activate available skills to complete tasks. After each skill, consider whether 
                             })
                             
                             # Include CURRENT_TASK if it exists
-                            current_task_file = SCRATCH_DIR / "CURRENT_TASK.txt"
-                            current_task_info = ""
-                            
-                            if current_task_file.exists():
-                                try:
-                                    with open(current_task_file, 'r') as f:
-                                        current_task_data = json.load(f)
-                                    
-                                    if current_task_data.get('status') == 'active':
-                                        current_task_info = f"\n\n--- CURRENT TASK ---\nTask #{current_task_data['task_number']}: {current_task_data['description']}\n---"
-                                except:
-                                    pass  # If file is malformed, skip
+                            current_task_info = self._get_current_task_info()
                             
                             activation_msg = f"Switched to skill '{new_skill_name}'.\n\nInstructions:\n{skill_content}\n\nYou can access tools from this skill.{current_task_info}"
                             

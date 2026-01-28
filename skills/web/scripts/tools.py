@@ -14,30 +14,27 @@ from pysearx import search as pysearx_search
 from readability import Document
 from urllib.parse import urlparse, parse_qs
 import ipaddress
+import sys
+
+# Add parent directory to path to import utils
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+from utils import sanitize_filename, ensure_scratch_dir
 
 
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
 
-def _sanitize_filename(name):
-    """Sanitize a string for use as a filename"""
-    name = re.sub(r'[^\w\s-]', '_', name)
-    name = re.sub(r'\s+', '_', name)
-    return name[:100]
-
-
 def _save_to_scratch(url, title, content):
     """Save content to scratch directory as JSONL"""
     try:
-        scratch_dir = Path("scratch")
-        scratch_dir.mkdir(exist_ok=True)
+        scratch_dir = ensure_scratch_dir()
         
         if title:
-            filename = _sanitize_filename(title)
+            filename = sanitize_filename(title)
         else:
             parsed = urlparse(url)
-            filename = _sanitize_filename(parsed.path.replace('/', '_') or 'content')
+            filename = sanitize_filename(parsed.path.replace('/', '_') or 'content')
         
         filepath = scratch_dir / f"url_{filename}.jsonl"
         
@@ -75,6 +72,12 @@ def _is_wikipedia_url(url):
     """Check if URL is a Wikipedia article"""
     parsed = urlparse(url)
     return 'wikipedia.org' in parsed.netloc
+
+
+def _is_github_url(url):
+    """Check if URL is a GitHub URL"""
+    parsed = urlparse(url)
+    return 'github.com' in parsed.netloc or 'raw.githubusercontent.com' in parsed.netloc
 
 
 def _is_pdf_url(url):
@@ -200,10 +203,9 @@ def search(query: str) -> str:
             })
         
         # Save results to scratch directory
-        scratch_dir = Path("scratch")
-        scratch_dir.mkdir(exist_ok=True)
+        scratch_dir = ensure_scratch_dir()
         
-        filename = _sanitize_filename(query)
+        filename = sanitize_filename(query)
         filepath = scratch_dir / f"query_{filename}.jsonl"
         
         with open(filepath, 'w') as f:
@@ -256,6 +258,13 @@ def read_url(url: str) -> str:
     # Handle regular web pages
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (compatible; SkillAgent/1.0)'}
+        
+        # Add GitHub token if URL is from GitHub and token is available
+        if _is_github_url(url):
+            github_token = os.getenv('GITHUB_TOKEN')
+            if github_token:
+                headers['Authorization'] = f'token {github_token}'
+        
         response = requests.get(url, timeout=30, headers=headers)
         response.raise_for_status()
         

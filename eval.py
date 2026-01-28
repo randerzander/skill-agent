@@ -15,15 +15,11 @@ from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress
 from agent import AgentSkillsFramework
+from utils import load_config
 
 # Load environment
 load_dotenv()
 console = Console()
-
-def load_config(config_path="config.yaml"):
-    """Load configuration"""
-    with open(config_path) as f:
-        return yaml.safe_load(f)
 
 def load_test_questions(csv_path, num_questions=5):
     """Load test questions from CSV"""

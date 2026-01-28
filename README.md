@@ -28,10 +28,11 @@ cd skill-agent
 pip install -r requirements.txt
 ```
 
-3. Configure your OpenRouter API key:
+3. Configure your API keys:
 ```bash
 cp .env.example .env
 # Edit .env and add your OPENROUTER_API_KEY
+# Optionally add GITHUB_TOKEN for authenticated GitHub requests (higher rate limits)
 ```
 
 ## Usage
@@ -44,6 +45,8 @@ python app.py
 ```
 
 Then open your browser to `http://localhost:10000`
+
+See [docs/WEB_FRONTEND_GUIDE.md](docs/WEB_FRONTEND_GUIDE.md) for detailed web UI documentation.
 
 The web frontend provides:
 - 🎨 **Beautiful UI**: Modern, responsive interface with real-time updates
@@ -88,6 +91,34 @@ The framework implements **progressive disclosure** and **OpenAI tools format** 
 7. **Response**: Results are passed back to the LLM for natural language response generation
 
 This approach keeps agents fast while giving them access to more context on demand, and uses the standard OpenAI tools API for script execution.
+
+## Project Structure
+
+```
+skill-agent/
+├── agent.py              # Main agent framework
+├── app.py                # Web UI (Flask + HTMX)
+├── eval.py               # Evaluation script
+├── utils.py              # Shared utilities
+├── keepalive.py          # Background keepalive service
+├── config.yaml           # Configuration
+├── requirements.txt      # Python dependencies
+├── docs/                 # Documentation
+│   └── WEB_FRONTEND_GUIDE.md
+├── skills/               # Agent skills
+│   ├── planning/
+│   ├── web/
+│   ├── answer/
+│   └── greet/
+├── tests/                # Test scripts
+│   ├── test_framework.py
+│   ├── test_github_token.py
+│   └── example.py
+├── templates/            # HTML templates
+├── data/                 # Data files
+├── logs/                 # Execution logs
+└── scratch/             # Temporary workspace (auto-generated)
+```
 
 ## Skill Structure
 
@@ -226,19 +257,33 @@ Flask-based web interface with HTMX for real-time updates:
 
 Environment variables (set in `.env`):
 - `OPENROUTER_API_KEY`: Your OpenRouter API key (required)
+- `GITHUB_TOKEN`: GitHub personal access token (optional - enables authenticated requests to GitHub, higher rate limits, and access to private repos)
 - `PORT`: Port for web frontend (default: 10000)
 - `SECRET_KEY`: Flask secret key (default: auto-generated for dev)
 
 ## Testing
 
-Run the test suite:
+Test the framework:
 ```bash
-python test_framework.py
+# Run main test suite
+python tests/test_framework.py
+
+# Test GitHub token authentication (requires GITHUB_TOKEN in .env)
+python tests/test_github_token.py
+
+# Run example simulation (works without API key)
+python tests/example.py
 ```
 
-Run the example simulation (works without API key):
+## Evaluation
+
+Evaluate the agent on test questions:
 ```bash
-python example.py
+# Run evaluation on 5 questions (default)
+python eval.py
+
+# Run on custom number of questions
+python eval.py -n 10
 ```
 
 ## Learn More

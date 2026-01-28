@@ -48,7 +48,7 @@ global_tools:
 
 # Agent Configuration
 agent:
-  max_iterations: 30
+  max_iterations: 60
 
 # Skills Configuration
 skills:

@@ -8,18 +8,14 @@ import os
 import json
 import requests
 import yaml
+import sys
 from urllib.parse import urlparse
 from pathlib import Path
 from openai import OpenAI
 
-
-def _load_config():
-    """Load config.yaml to get OpenAI settings"""
-    try:
-        with open('config.yaml', 'r') as f:
-            return yaml.safe_load(f)
-    except:
-        return {}
+# Add parent directory to path to import utils
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+from utils import load_config, get_scratch_dir
 
 
 def _extract_urls_with_context(text):
@@ -63,7 +59,7 @@ def _find_cached_content(url):
     Find cached web content from scratch/ directory
     Returns: (title, content) or (None, None) if not found
     """
-    scratch_dir = Path("scratch")
+    scratch_dir = get_scratch_dir()
     if not scratch_dir.exists():
         return None, None
     
@@ -98,7 +94,7 @@ def _verify_citation_with_llm(url, claim, content):
     if len(content) > 8000:
         content = content[:8000] + "\n\n[Content truncated...]"
     
-    config = _load_config()
+    config = load_config()
     api_key = os.getenv("OPENROUTER_API_KEY")
     base_url = config.get('openai', {}).get('base_url', 'https://openrouter.ai/api/v1')
     model = config.get('openai', {}).get('model', 'nvidia/nemotron-3-nano-30b-a3b:free')

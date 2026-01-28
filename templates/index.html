@@ -711,34 +711,6 @@
     <script>
         let eventSource = null;
         let startTime = null;
-        let autoScrollEnabled = true;  // Track if auto-scroll is enabled
-        
-        // Detect manual scroll in logs to disable auto-scroll
-        window.addEventListener('DOMContentLoaded', () => {
-            const logsDiv = document.getElementById('logs');
-            let isScrolling;
-            
-            logsDiv.addEventListener('scroll', () => {
-                // Clear timeout if user is still scrolling
-                clearTimeout(isScrolling);
-                
-                // Check if user scrolled away from bottom
-                const isAtBottom = logsDiv.scrollHeight - logsDiv.scrollTop <= logsDiv.clientHeight + 50;
-                
-                if (!isAtBottom) {
-                    // User scrolled up, disable auto-scroll
-                    autoScrollEnabled = false;
-                }
-                
-                // Set a timeout to re-enable auto-scroll if user scrolls back to bottom
-                isScrolling = setTimeout(() => {
-                    const isAtBottom = logsDiv.scrollHeight - logsDiv.scrollTop <= logsDiv.clientHeight + 50;
-                    if (isAtBottom) {
-                        autoScrollEnabled = true;
-                    }
-                }, 150);
-            });
-        });
         
         // Load skills on page load
         window.addEventListener('DOMContentLoaded', loadSkills);
@@ -963,12 +935,15 @@
                     
                 case 'task_created':
                     addTask(event.data.task_number, event.data.description, event.data.status || 'incomplete');
-                    addLog('task', `📋 Task ${event.data.task_number} created`, event.timestamp, elapsed);
+                    addLog('task', `New Task ${event.data.task_number}: ${event.data.description}`, event.timestamp, elapsed);
                     break;
                     
                 case 'task_completed':
                     updateTask(event.data.task_number, 'completed');
-                    addLog('task', `✅ Task ${event.data.task_number} completed`, event.timestamp, elapsed);
+                    // Get task description from DOM
+                    const completedTaskEl = document.querySelector(`[data-task-number="${event.data.task_number}"] .task-description`);
+                    const taskDesc = completedTaskEl ? completedTaskEl.textContent : '';
+                    addLog('task', `✅ Task ${event.data.task_number} complete: ${taskDesc}`, event.timestamp, elapsed);
                     break;
                     
                 case 'task_activated':
@@ -1068,10 +1043,8 @@
             
             logsDiv.appendChild(logEntry);
             
-            // Auto-scroll only if enabled
-            if (autoScrollEnabled) {
-                logsDiv.scrollTop = logsDiv.scrollHeight;
-            }
+            // Always scroll to bottom on new log entry
+            logsDiv.scrollTop = logsDiv.scrollHeight;
             
             return logEntry;
         }

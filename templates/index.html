@@ -711,6 +711,34 @@
     <script>
         let eventSource = null;
         let startTime = null;
+        let autoScrollEnabled = true;  // Track if auto-scroll is enabled
+        
+        // Detect manual scroll in logs to disable auto-scroll
+        window.addEventListener('DOMContentLoaded', () => {
+            const logsDiv = document.getElementById('logs');
+            let isScrolling;
+            
+            logsDiv.addEventListener('scroll', () => {
+                // Clear timeout if user is still scrolling
+                clearTimeout(isScrolling);
+                
+                // Check if user scrolled away from bottom
+                const isAtBottom = logsDiv.scrollHeight - logsDiv.scrollTop <= logsDiv.clientHeight + 50;
+                
+                if (!isAtBottom) {
+                    // User scrolled up, disable auto-scroll
+                    autoScrollEnabled = false;
+                }
+                
+                // Set a timeout to re-enable auto-scroll if user scrolls back to bottom
+                isScrolling = setTimeout(() => {
+                    const isAtBottom = logsDiv.scrollHeight - logsDiv.scrollTop <= logsDiv.clientHeight + 50;
+                    if (isAtBottom) {
+                        autoScrollEnabled = true;
+                    }
+                }, 150);
+            });
+        });
         
         // Load skills on page load
         window.addEventListener('DOMContentLoaded', loadSkills);
@@ -767,6 +795,9 @@
             logsDiv.innerHTML = '';
             submitBtn.disabled = true;
             document.getElementById('userInput').disabled = true;
+            
+            // Re-enable auto-scroll for new run
+            autoScrollEnabled = true;
             
             // Clear tasks list
             tasksList.innerHTML = '<div class="empty-state">No tasks yet</div>';
@@ -1023,7 +1054,11 @@
             `;
             
             logsDiv.appendChild(logEntry);
-            logsDiv.scrollTop = logsDiv.scrollHeight;
+            
+            // Auto-scroll only if enabled
+            if (autoScrollEnabled) {
+                logsDiv.scrollTop = logsDiv.scrollHeight;
+            }
             
             return logEntry;
         }

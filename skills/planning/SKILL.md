@@ -13,12 +13,15 @@ For each entity, ask yourself who or what is this thing? Create separate sub-tas
 ## Example
 **User Query:** "Plan a weekend trip to Paris including flights, accommodation, and sightseeing."
 1. Call "list_skills"
-2. create_subquestion_task "Use web skills to research and book flights to Paris"
-3. create_subquestion_task "Use web skills to find and reserve accommodation in Paris"
-4. create_subquestion_task "Use web skills to create a sightseeing itinerary for Paris"
+2. create_subquestion_tasks with descriptions: ["Use web skills to research and book flights to Paris", "Use web skills to find and reserve accommodation in Paris", "Use web skills to create a sightseeing itinerary for Paris"]
+
+OR create them individually:
+2a. create_subquestion_tasks "Use web skills to research and book flights to Paris"
+2b. create_subquestion_tasks "Use web skills to find and reserve accommodation in Paris"
+2c. create_subquestion_tasks "Use web skills to create a sightseeing itinerary for Paris"
 
 ## Workflow
 
-1. Create sub-tasks using `create_subquestion_task(description: str)`
+1. Create sub-tasks using `create_subquestion_tasks(descriptions: str | List[str])` - accepts a single description string OR a list of description strings
 2. Call "list_skills" to learn about the skills (collections of special tools) you can use to solve these tasks.
 3. Use global 'skill_switch' tool with appropriate skill_name (e.g., skill_name='web' to search and browse the web for more information) to work on each task

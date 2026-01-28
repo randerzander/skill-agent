@@ -173,18 +173,29 @@ class WebAgentWrapper:
             
             # Check for task creation
             # Result is nested: result.result contains the actual JSON string
-            if script in ['create_task', 'create_subquestion_task'] and isinstance(result, dict):
+            if script in ['create_task', 'create_subquestion_task', 'create_subquestion_tasks'] and isinstance(result, dict):
                 actual_result = result.get('result', '')
                 if isinstance(actual_result, str):
                     try:
                         result_data = json.loads(actual_result)
                         if result_data.get('status') == 'success':
-                            task_status = 'active' if result_data.get('is_active') else 'incomplete'
-                            self.add_event('task_created', {
-                                'task_number': result_data.get('task_number'),
-                                'description': result_data.get('description'),
-                                'status': task_status
-                            }, elapsed)
+                            # Handle new format with multiple tasks
+                            if 'tasks' in result_data:
+                                for task in result_data.get('tasks', []):
+                                    task_status = 'active' if task.get('task_number') == 1 else 'incomplete'
+                                    self.add_event('task_created', {
+                                        'task_number': task.get('task_number'),
+                                        'description': task.get('description'),
+                                        'status': task_status
+                                    }, elapsed)
+                            # Handle old format with single task
+                            elif 'task_number' in result_data:
+                                task_status = 'active' if result_data.get('is_active') else 'incomplete'
+                                self.add_event('task_created', {
+                                    'task_number': result_data.get('task_number'),
+                                    'description': result_data.get('description'),
+                                    'status': task_status
+                                }, elapsed)
                     except:
                         pass
                     

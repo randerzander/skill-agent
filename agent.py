@@ -1393,11 +1393,39 @@ Activate available skills to complete tasks. After each skill, consider whether 
                                     })
                                     
                                     # Update with final status
+                                    # Check for errors at multiple levels
+                                    has_error = False
+                                    error_msg = None
+                                    
                                     if "error" in result:
+                                        has_error = True
+                                        error_msg = result['error']
+                                    elif "result" in result and isinstance(result["result"], dict) and "error" in result["result"]:
+                                        has_error = True
+                                        error_msg = result["result"]["error"]
+                                    elif "result" in result and isinstance(result["result"], str):
+                                        # Check if result string contains error
+                                        try:
+                                            result_obj = json.loads(result["result"])
+                                            if isinstance(result_obj, dict) and "error" in result_obj:
+                                                has_error = True
+                                                error_msg = result_obj["error"]
+                                        except json.JSONDecodeError:
+                                            # Not JSON, check if string contains "error" indicators
+                                            result_str = result["result"].lower()
+                                            if "error" in result_str or "failed" in result_str or "exception" in result_str:
+                                                has_error = True
+                                                error_msg = result["result"]
+                                        except Exception:
+                                            pass
+                                    
+                                    if has_error:
                                         final_text = Text()
-                                        final_text.append("✗ ", style="red")
-                                        final_text.append(f"{active_skill}.{script_name}", style="bold")
-                                        final_text.append(f": {result['error'][:100]}", style="red dim")
+                                        final_text.append("✗ ", style="red bold")
+                                        final_text.append(f"{active_skill}.{script_name}", style="bold red")
+                                        if error_msg:
+                                            error_preview = str(error_msg)[:100]
+                                            final_text.append(f": {error_preview}", style="red dim")
                                         live.update(final_text)
                                     else:
                                         final_text = Text()

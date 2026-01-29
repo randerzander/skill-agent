@@ -162,7 +162,28 @@ class WebAgentWrapper:
         elif event_type == 'tool_execution':
             # Tool execution result
             result = log_entry.get('result', {}) if isinstance(log_entry, dict) else {}
-            is_error = 'error' in result if isinstance(result, dict) else False
+            
+            # Check for errors at multiple levels
+            is_error = False
+            if isinstance(result, dict):
+                if 'error' in result:
+                    is_error = True
+                elif 'result' in result:
+                    nested = result['result']
+                    if isinstance(nested, dict) and 'error' in nested:
+                        is_error = True
+                    elif isinstance(nested, str):
+                        # Try parsing JSON string
+                        try:
+                            import json as json_module
+                            parsed = json_module.loads(nested)
+                            if isinstance(parsed, dict) and 'error' in parsed:
+                                is_error = True
+                        except:
+                            # Check for error keywords in string
+                            if 'error' in nested.lower() or 'failed' in nested.lower():
+                                is_error = True
+            
             script = log_entry.get('script', '') if isinstance(log_entry, dict) else ''
             
             self.add_event('tool_result', {

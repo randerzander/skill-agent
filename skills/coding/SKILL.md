@@ -26,18 +26,20 @@ The web skill saves content to the scratch directory:
 
 ## Workflow
 
-1. Use `write_code` to create Python scripts saved to `scratch/code/`
-2. Use `run_code` to execute the script and get results
-3. Scripts can read files from `scratch/` to process scraped data
-4. Results are returned as text output
+1. Use `generate_code` to have the coding model (qwen3-coder) write Python code for you
+2. Use `write_code` to save the generated (or hand-written) code to `scratch/code/`
+3. Use `run_code` to execute the script and get results
+4. Scripts can read files from `scratch/` to process scraped data
+5. Results are returned as text output
 
 ## Tools
 
-- `write_code(filename: str, code: str)` - Write Python code to scratch/code/
+- `generate_code(task_description: str, context: str)` - Use coding model to generate Python code
+- `write_code(filename: str, code: str)` - Save Python code to scratch/code/
 - `run_code(filename: str)` - Execute a previously written script (file must exist)
 
-**Important**: Always use `write_code` FIRST to create the file, then `run_code` to execute it.
-The `run_code` function only accepts a filename parameter, not code.
+**Recommended**: Use `generate_code` first to let the specialized coding model write the code,
+then use `write_code` to save it, and `run_code` to execute it.
 
 ## Tips
 

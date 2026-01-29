@@ -17,6 +17,78 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 from utils import load_config, get_scratch_dir
 
 
+def generate_code(task_description: str, context: str = "") -> str:
+    """
+    Generate Python code using the coding model (qwen/qwen3-coder:free).
+    Use this when you need to create code but want the specialized coding model to write it.
+    
+    Args:
+        task_description: Description of what the code should do
+        context: Optional additional context (available files, data structure, etc.)
+    
+    Returns:
+        JSON string with generated code
+    """
+    import json
+    
+    try:
+        config = load_config()
+        api_key = os.getenv(config.get('openai', {}).get('api_key_env', 'OPENROUTER_API_KEY'))
+        
+        if not api_key:
+            return json.dumps({"error": "API key not found"})
+        
+        # Get coding model from config
+        coding_model = config.get('coding', {}).get('model', 'qwen/qwen3-coder:free')
+        
+        client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key
+        )
+        
+        prompt = f"""Write Python code to {task_description}.
+
+{context}
+
+Requirements:
+- Use relative paths starting with 'scratch/' to read data files
+- Print results to stdout
+- Use only standard library or commonly available packages (json, pathlib, etc.)
+- Include error handling
+- Keep it simple and focused
+
+Output only the Python code, no explanations."""
+
+        response = client.chat.completions.create(
+            model=coding_model,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2
+        )
+        
+        code = response.choices[0].message.content
+        
+        # Extract code from markdown if present
+        if "```python" in code:
+            code = code.split("```python")[1].split("```")[0].strip()
+        elif "```" in code:
+            code = code.split("```")[1].split("```")[0].strip()
+        
+        return json.dumps({
+            "result": {
+                "code": code,
+                "model_used": coding_model,
+                "note": "Use write_code() to save this code to a file, then run_code() to execute it."
+            }
+        })
+    
+    except Exception as e:
+        return json.dumps({
+            "error": f"Failed to generate code: {str(e)}"
+        })
+
+
 def write_code(filename: str, code: str) -> str:
     """
     Write Python code to a file in scratch/code/ directory.
@@ -159,64 +231,3 @@ def run_code(filename: str) -> str:
             "error": f"Failed to execute code: {str(e)}"
         })
 
-
-def generate_code_with_llm(task_description: str, context: str = "") -> str:
-    """
-    Helper function to generate Python code using coding model from config.
-    This is an internal helper, not exposed as a tool.
-    
-    Args:
-        task_description: What the code should do
-        context: Additional context (e.g., available files, data structure)
-    
-    Returns:
-        Generated Python code as string
-    """
-    try:
-        config = load_config()
-        api_key = os.getenv(config.get('openai', {}).get('api_key_env', 'OPENROUTER_API_KEY'))
-        
-        if not api_key:
-            raise ValueError("API key not found")
-        
-        # Get coding model from config
-        coding_model = config.get('coding', {}).get('model', 'qwen/qwen3-coder:free')
-        
-        client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=api_key
-        )
-        
-        prompt = f"""Write Python code to {task_description}.
-
-{context}
-
-Requirements:
-- Use relative paths starting with 'scratch/' to read data files
-- Print results to stdout
-- Use only standard library or commonly available packages (json, pathlib, etc.)
-- Include error handling
-- Keep it simple and focused
-
-Output only the Python code, no explanations."""
-
-        response = client.chat.completions.create(
-            model=coding_model,
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.2
-        )
-        
-        code = response.choices[0].message.content
-        
-        # Extract code from markdown if present
-        if "```python" in code:
-            code = code.split("```python")[1].split("```")[0].strip()
-        elif "```" in code:
-            code = code.split("```")[1].split("```")[0].strip()
-        
-        return code
-    
-    except Exception as e:
-        return f"# Error generating code: {str(e)}\nprint('Code generation failed')"

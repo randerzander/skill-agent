@@ -36,6 +36,10 @@ agent_state = {
 }
 state_lock = threading.Lock()
 
+# Session management - store state per session ID
+sessions = {}  # session_id -> session_state
+sessions_lock = threading.Lock()
+
 
 def get_client_ip():
     """Get the real client IP address from X-Forwarded-For header or remote_addr"""
@@ -317,14 +321,41 @@ def run_agent():
     if not user_input:
         return jsonify({'error': 'No input provided'}), 400
     
-    client_ip = get_client_ip()
-    print(f"[{client_ip}] User query: {user_input}")
+    # Get or create session ID
+    session_id = request.json.get('session_id', None)
+    if not session_id:
+        session_id = secrets.token_hex(16)
     
+    client_ip = get_client_ip()
+    print(f"[{client_ip}] User query: {user_input} (session: {session_id})")
+    
+    # Initialize session state
+    with sessions_lock:
+        if session_id not in sessions:
+            sessions[session_id] = {
+                'running': False,
+                'logs': [],
+                'chat_history': [],
+                'tools_called': [],
+                'start_time': None,
+                'elapsed_time': 0,
+                'completed': False
+            }
+        session_state = sessions[session_id]
+        
+        if session_state['running']:
+            return jsonify({'error': 'Agent is already running for this session'}), 400
+        session_state['running'] = True
+        session_state['start_time'] = time.time()
+        session_state['logs'] = []
+        session_state['chat_history'] = []
+        session_state['tools_called'] = []
+        session_state['completed'] = False
+    
+    # Also update global state for backward compatibility
     with state_lock:
-        if agent_state['running']:
-            return jsonify({'error': 'Agent is already running'}), 400
         agent_state['running'] = True
-        agent_state['start_time'] = time.time()
+        agent_state['start_time'] = session_state['start_time']
         agent_state['logs'] = []
         agent_state['chat_history'] = []
         agent_state['tools_called'] = []
@@ -351,6 +382,9 @@ def run_agent():
         agent_thread = threading.Thread(target=run_agent_thread)
         agent_thread.start()
         
+        # Send session ID as first event
+        yield f"data: {json.dumps({'type': 'session_id', 'session_id': session_id})}\n\n"
+        
         try:
             # Stream events as they come from the queue
             while not agent_done.is_set() or not event_queue.empty():
@@ -358,6 +392,37 @@ def run_agent():
                     # Wait for event with timeout so we can check if agent is done
                     event = event_queue.get(timeout=0.1)
                     
+                    # Store event in session state
+                    with sessions_lock:
+                        session_state['elapsed_time'] = event['elapsed']
+                        session_state['logs'].append(event)
+                        
+                        # Update chat history
+                        if event['type'] == 'user_message':
+                            session_state['chat_history'].append({
+                                'role': 'user',
+                                'content': event['data']['content'],
+                                'timestamp': event['timestamp']
+                            })
+                        elif event['type'] == 'llm_response':
+                            session_state['chat_history'].append({
+                                'role': 'assistant',
+                                'content': event['data']['content'],
+                                'thinking': event['data'].get('thinking'),
+                                'tool_calls': event['data'].get('tool_calls', []),
+                                'timestamp': event['timestamp']
+                            })
+                        elif event['type'] == 'tool_call':
+                            session_state['tools_called'].append(event['data'])
+                        elif event['type'] == 'tool_result':
+                            session_state['chat_history'].append({
+                                'role': 'tool',
+                                'content': json.dumps(event['data']['result']),
+                                'tool_name': event['data']['tool_name'],
+                                'timestamp': event['timestamp']
+                            })
+                    
+                    # Also update global state for backward compatibility
                     with state_lock:
                         agent_state['elapsed_time'] = event['elapsed']
                         agent_state['logs'].append(event)
@@ -403,13 +468,52 @@ def run_agent():
                 # Send completion event
                 yield f"data: {json.dumps({'type': 'complete', 'response': agent_response})}\n\n"
             
+            # Mark session as completed
+            with sessions_lock:
+                session_state['completed'] = True
+            
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
         finally:
+            with sessions_lock:
+                session_state['running'] = False
             with state_lock:
                 agent_state['running'] = False
     
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
+
+@app.route('/api/reconnect', methods=['POST'])
+def reconnect_session():
+    """Reconnect to an existing session and get missed events"""
+    session_id = request.json.get('session_id', None)
+    last_event_index = request.json.get('last_event_index', -1)
+    
+    if not session_id:
+        return jsonify({'error': 'No session_id provided'}), 400
+    
+    with sessions_lock:
+        if session_id not in sessions:
+            return jsonify({'error': 'Session not found'}), 404
+        
+        session_state = sessions[session_id]
+        
+        def generate():
+            """Generate SSE events for reconnection"""
+            # Send all events that occurred after last_event_index
+            with sessions_lock:
+                missed_events = session_state['logs'][last_event_index + 1:]
+                
+                for event in missed_events:
+                    yield f"data: {json.dumps(event)}\n\n"
+                
+                # If session is completed, send completion event
+                if session_state['completed']:
+                    yield f"data: {json.dumps({'type': 'complete', 'response': 'Session resumed'})}\n\n"
+                # If session is still running, keep connection open but no new events
+                # (new events will be delivered via the original connection when it reconnects)
+        
+        return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
 
 @app.route('/api/chat_history')

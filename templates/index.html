@@ -925,10 +925,104 @@
         const toolTotalTimes = new Map();
         const toolCallCounts = new Map();
         
+        // Session persistence
+        let sessionId = null;
+        let eventCount = 0;
+        let isReconnecting = false;
+        let currentReader = null;
+        
+        // Get or create session ID from localStorage
+        function getOrCreateSessionId() {
+            let storedSessionId = localStorage.getItem('agent_session_id');
+            if (!storedSessionId) {
+                storedSessionId = generateSessionId();
+                localStorage.setItem('agent_session_id', storedSessionId);
+            }
+            return storedSessionId;
+        }
+        
+        function generateSessionId() {
+            return Array.from(crypto.getRandomValues(new Uint8Array(16)))
+                .map(b => b.toString(16).padStart(2, '0'))
+                .join('');
+        }
+        
+        // Handle page visibility changes
+        document.addEventListener('visibilitychange', function() {
+            console.log('Visibility changed:', document.hidden ? 'hidden' : 'visible');
+            if (!document.hidden && sessionId && eventCount > 0) {
+                // Page became visible again, try to reconnect
+                reconnectToSession();
+            }
+        });
+        
+        function reconnectToSession() {
+            if (isReconnecting || !sessionId) {
+                return;
+            }
+            
+            console.log('Attempting to reconnect to session:', sessionId, 'last event:', eventCount - 1);
+            isReconnecting = true;
+            
+            fetch('/api/reconnect', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ 
+                    session_id: sessionId,
+                    last_event_index: eventCount - 1
+                })
+            }).then(response => {
+                console.log('Reconnect response:', response);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                
+                function readReconnectStream() {
+                    reader.read().then(({ done, value }) => {
+                        if (done) {
+                            console.log('Reconnect stream ended');
+                            isReconnecting = false;
+                            return;
+                        }
+                        
+                        const text = decoder.decode(value);
+                        const lines = text.split('\n');
+                        
+                        for (let line of lines) {
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    const event = JSON.parse(line.substring(6));
+                                    handleEvent(event);
+                                } catch (e) {
+                                    console.error('Error parsing reconnect event:', e);
+                                }
+                            }
+                        }
+                        
+                        readReconnectStream();
+                    }).catch(err => {
+                        console.error('Error reading reconnect stream:', err);
+                        isReconnecting = false;
+                    });
+                }
+                
+                readReconnectStream();
+            }).catch(err => {
+                console.error('Error reconnecting to session:', err);
+                isReconnecting = false;
+            });
+        }
+        
         // Load skills on page load
         window.addEventListener('DOMContentLoaded', () => {
             loadSkills();
             initLogAutoScroll();
+            sessionId = getOrCreateSessionId();
+            console.log('Session ID:', sessionId);
         });
         
         function loadSkills() {
@@ -1009,21 +1103,28 @@
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ input: input })
+                body: JSON.stringify({ 
+                    input: input,
+                    session_id: sessionId
+                })
             }).then(response => {
                 console.log('Got response:', response);
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
-                const reader = response.body.getReader();
+                currentReader = response.body.getReader();
                 const decoder = new TextDecoder();
                 
+                // Reset event count for new session
+                eventCount = 0;
+                
                 function readStream() {
-                    reader.read().then(({ done, value }) => {
+                    currentReader.read().then(({ done, value }) => {
                         if (done) {
                             submitBtn.disabled = false;
                             document.getElementById('userInput').disabled = false;
                             document.getElementById('userInput').value = '';
+                            currentReader = null;
                             return;
                         }
                         
@@ -1042,6 +1143,11 @@
                         }
                         
                         readStream();
+                    }).catch(err => {
+                        console.error('Error reading stream:', err);
+                        submitBtn.disabled = false;
+                        document.getElementById('userInput').disabled = false;
+                        currentReader = null;
                     });
                 }
                 
@@ -1059,6 +1165,17 @@
             const elapsed = Math.max(0, totalElapsed - lastEventElapsed);
             lastEventElapsed = totalElapsed;
             updateLogStatsElapsed(totalElapsed);
+            
+            // Handle session_id event
+            if (event.type === 'session_id') {
+                sessionId = event.session_id;
+                localStorage.setItem('agent_session_id', sessionId);
+                console.log('Received session ID:', sessionId);
+                return;
+            }
+            
+            // Increment event count for all non-session_id events
+            eventCount++;
             
             switch (event.type) {
                 case 'user_message':

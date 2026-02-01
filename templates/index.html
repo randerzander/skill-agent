@@ -758,12 +758,15 @@
                     <div class="log-stats" id="logStats">
                         <div class="log-stats-row">
                             <span><span class="log-stats-key">Elapsed:</span> <span id="statsElapsed">0.0s</span></span>
+                            <span><span class="log-stats-key">LLM time:</span> <span id="statsLLMTime">0.0s</span></span>
+                            <span><span class="log-stats-key">LLM calls:</span> <span id="statsLLMCalls">0</span></span>
+                            <span><span class="log-stats-key">Tool time:</span> <span id="statsToolTimeTotal">0.0s</span></span>
                             <span><span class="log-stats-key">Tool calls:</span> <span id="statsToolCount">0</span></span>
                         </div>
                         <div>
-                            <span class="log-stats-key">Tool time:</span>
+                            <span class="log-stats-key">Tools:</span>
                             <div class="tool-stats" id="statsToolTimes">
-                                <div class="tool-stat"><span>—</span><span>0.0s</span></div>
+                                <div class="tool-stat"><span>—</span><span>0.0s · 0</span></div>
                             </div>
                         </div>
                     </div>
@@ -811,8 +814,10 @@
         let logScrollListenerAttached = false;
         const LOG_AUTO_SCROLL_THRESHOLD = 40;
         let toolCallCount = 0;
+        let llmCallCount = 0;
         const toolStartTimes = new Map();
         const toolTotalTimes = new Map();
+        const toolCallCounts = new Map();
         
         // Load skills on page load
         window.addEventListener('DOMContentLoaded', () => {
@@ -889,6 +894,7 @@
             
             startTime = Date.now();
             lastEventElapsed = 0;
+            llmCallCount = 0;
             
             console.log('Making POST to /api/run...');
             
@@ -959,6 +965,8 @@
                     break;
                     
                 case 'llm_response':
+                    llmCallCount += 1;
+                    updateLLMCallCount();
                     if (event.data.content) {
                         addLog('llm', `🤖 LLM: ${event.data.content}`, event.timestamp, elapsed);
                     }
@@ -1241,8 +1249,11 @@
             toolCallCount = 0;
             toolStartTimes.clear();
             toolTotalTimes.clear();
+            toolCallCounts.clear();
+            llmCallCount = 0;
             updateLogStatsElapsed(0);
             updateToolCallCount();
+            updateLLMCallCount();
             renderToolTimes();
         }
 
@@ -1251,12 +1262,20 @@
             if (elapsedEl) {
                 elapsedEl.textContent = `${totalElapsed.toFixed(1)}s`;
             }
+            updateLLMTime(totalElapsed);
         }
 
         function updateToolCallCount() {
             const countEl = document.getElementById('statsToolCount');
             if (countEl) {
                 countEl.textContent = String(toolCallCount);
+            }
+        }
+
+        function updateLLMCallCount() {
+            const countEl = document.getElementById('statsLLMCalls');
+            if (countEl) {
+                countEl.textContent = String(llmCallCount);
             }
         }
 
@@ -1270,6 +1289,10 @@
             const starts = toolStartTimes.get(toolName) || [];
             starts.push(totalElapsed);
             toolStartTimes.set(toolName, starts);
+
+            const currentCount = toolCallCounts.get(toolName) || 0;
+            toolCallCounts.set(toolName, currentCount + 1);
+            renderToolTimes();
         }
 
         function registerToolEnd(toolName, totalElapsed) {
@@ -1287,6 +1310,7 @@
             const currentTotal = toolTotalTimes.get(toolName) || 0;
             toolTotalTimes.set(toolName, currentTotal + duration);
             renderToolTimes();
+            updateLLMTime(lastEventElapsed);
         }
 
         function renderToolTimes() {
@@ -1295,19 +1319,49 @@
                 return;
             }
             if (toolTotalTimes.size === 0) {
-                container.innerHTML = '<div class="tool-stat"><span>—</span><span>0.0s</span></div>';
+                container.innerHTML = '<div class="tool-stat"><span>—</span><span>0.0s · 0</span></div>';
                 return;
             }
 
             const entries = Array.from(toolTotalTimes.entries())
                 .sort((a, b) => b[1] - a[1]);
 
-            container.innerHTML = entries.map(([tool, seconds]) => `
+            container.innerHTML = entries.map(([tool, seconds]) => {
+                const count = toolCallCounts.get(tool) || 0;
+                return `
                 <div class="tool-stat">
                     <span>${escapeHtml(tool)}</span>
-                    <span>${seconds.toFixed(1)}s</span>
+                    <span>${seconds.toFixed(1)}s · ${count}</span>
                 </div>
-            `).join('');
+            `;
+            }).join('');
+        }
+
+        function updateLLMTime(totalElapsed) {
+            const llmEl = document.getElementById('statsLLMTime');
+            if (!llmEl) {
+                return;
+            }
+            const toolTotal = getToolTotalSeconds();
+            const llmTime = Math.max(0, totalElapsed - toolTotal);
+            llmEl.textContent = `${llmTime.toFixed(1)}s`;
+            updateToolTotalTime(toolTotal);
+        }
+
+        function getToolTotalSeconds() {
+            let sum = 0;
+            toolTotalTimes.forEach(value => {
+                sum += value;
+            });
+            return sum;
+        }
+
+        function updateToolTotalTime(totalSeconds) {
+            const toolTimeEl = document.getElementById('statsToolTimeTotal');
+            if (!toolTimeEl) {
+                return;
+            }
+            toolTimeEl.textContent = `${totalSeconds.toFixed(1)}s`;
         }
         
         function removeSpinnerForTool(toolName) {

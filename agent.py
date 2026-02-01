@@ -1824,8 +1824,7 @@ You must complete all tasks before finishing. Use the skill_switch tool to switc
                 response = requests.post(
                     'https://litterbox.catbox.moe/resources/internals/api.php',
                     data={
-                        'reqtype': 'fileupload',
-                        'time': '1h'  # Options: 1h, 12h, 24h, 72h
+                        'reqtype': 'fileupload'
                     },
                     files={'fileToUpload': f},
                     timeout=30

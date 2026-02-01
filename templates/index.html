@@ -34,6 +34,92 @@
             box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4), 0 0 40px rgba(255, 140, 0, 0.15);
             border: 1px solid rgba(255, 140, 0, 0.2);
         }
+
+        .header-content {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 24px;
+            flex-wrap: wrap;
+        }
+
+        .header-left {
+            min-width: 240px;
+        }
+
+        .header-right {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            flex: 1;
+            min-width: 240px;
+        }
+
+        .header-skills-title {
+            color: #ffa500;
+            font-size: 12px;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+
+        .header-skills-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .skill-pill {
+            position: relative;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: rgba(255, 140, 0, 0.12);
+            border: 1px solid rgba(255, 140, 0, 0.4);
+            color: #f7c66b;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: default;
+            transition: all 0.2s ease;
+        }
+
+        .skill-pill.active {
+            background: rgba(0, 255, 136, 0.2);
+            border-color: rgba(0, 255, 136, 0.7);
+            color: #7dffc2;
+            box-shadow: 0 0 12px rgba(0, 255, 136, 0.25);
+        }
+
+        .skill-pill::after {
+            content: attr(data-desc);
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%) translateY(8px);
+            top: 100%;
+            background: rgba(20, 24, 40, 0.98);
+            color: #e6e9f2;
+            border: 1px solid rgba(255, 140, 0, 0.3);
+            padding: 8px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            line-height: 1.4;
+            white-space: normal;
+            width: max-content;
+            min-width: 320px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s ease;
+            z-index: 10;
+            max-width: 640px;
+        }
+
+        .skill-pill:hover::after {
+            opacity: 1;
+        }
+
+        .skill-pill.empty {
+            opacity: 0.6;
+            border-style: dashed;
+        }
         
         h1 {
             color: #ff8c00;
@@ -404,46 +490,6 @@
         .log-entry.skill { background: rgba(255, 140, 0, 0.15); border-left: 3px solid #ff8c00; }
         .log-entry.complete { background: rgba(102, 187, 106, 0.15); border-left: 3px solid #66bb6a; }
         
-        .skills-list {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            max-height: 400px;
-            overflow-y: auto;
-        }
-        
-        .skill-item {
-            padding: 10px;
-            background: rgba(30, 33, 57, 0.6);
-            border-radius: 6px;
-            border-left: 3px solid #ff8c00;
-            box-shadow: 0 2px 8px rgba(255, 140, 0, 0.1);
-            overflow-wrap: break-word;
-            word-wrap: break-word;
-            transition: all 0.3s ease;
-        }
-        
-        .skill-item.active {
-            background: rgba(255, 140, 0, 0.15);
-            border-left-color: #00ff88;
-            box-shadow: 0 2px 12px rgba(0, 255, 136, 0.3);
-        }
-        
-        .skill-name {
-            font-weight: 600;
-            color: #ffa500;
-            margin-bottom: 4px;
-        }
-        
-        .skill-item.active .skill-name {
-            color: #00ff88;
-        }
-        
-        .skill-desc {
-            font-size: 12px;
-            color: #a0a5b8;
-        }
-        
         .tools-list {
             display: flex;
             flex-direction: column;
@@ -737,8 +783,18 @@
 <body>
     <div class="container">
         <header>
-            <h1>🤖 Agent Skills Framework</h1>
-            <p class="subtitle">Agentic AI with Dynamic Skill Discovery</p>
+            <div class="header-content">
+                <div class="header-left">
+                    <h1>🤖 Agent Skills Framework</h1>
+                    <p class="subtitle">Agentic AI with Dynamic Skill Discovery</p>
+                </div>
+                <div class="header-right">
+                    <div class="header-skills-title">Skills Loaded</div>
+                    <div id="skillsList" class="header-skills-list">
+                        <span class="skill-pill empty">Loading...</span>
+                    </div>
+                </div>
+            </div>
         </header>
         
         <div class="main-content">
@@ -808,13 +864,6 @@
             
             <div class="right-panel">
                 <div class="card">
-                    <h2 class="card-title">🎯 Skills Loaded</h2>
-                    <div id="skillsList" class="skills-list">
-                        <div class="empty-state">Loading...</div>
-                    </div>
-                </div>
-                
-                <div class="card">
                     <h2 class="card-title">📋 Tasks</h2>
                     <div id="tasksList" class="tasks-list">
                         <div class="empty-state">No tasks yet</div>
@@ -865,13 +914,12 @@
                     const skillsList = document.getElementById('skillsList');
                     if (data.skills_loaded && data.skills_loaded.length > 0) {
                         skillsList.innerHTML = data.skills_loaded.map(skill => `
-                            <div class="skill-item">
-                                <div class="skill-name">${escapeHtml(skill.name)}</div>
-                                <div class="skill-desc">${escapeHtml(skill.description)}</div>
-                            </div>
+                            <span class="skill-pill" data-desc="${escapeHtml(skill.description)}" title="${escapeHtml(skill.description)}">
+                                ${escapeHtml(skill.name)}
+                            </span>
                         `).join('');
                     } else {
-                        skillsList.innerHTML = '<div class="empty-state">No skills loaded</div>';
+                        skillsList.innerHTML = '<span class="skill-pill empty">No skills loaded</span>';
                     }
                 })
                 .catch(err => {
@@ -1112,7 +1160,7 @@
                     
                 case 'skill_deactivated':
                     // Clear all active skill highlights when deactivating
-                    const allSkills = document.querySelectorAll('.skill-item');
+                    const allSkills = document.querySelectorAll('.skill-pill');
                     allSkills.forEach(skill => skill.classList.remove('active'));
                     addLog('skill', `↩️ Skill deactivated: ${event.data.skill_name}`, event.timestamp, elapsed);
                     break;
@@ -1526,7 +1574,10 @@
         
         function markSkillActive(skillName, isActive) {
             const skillsList = document.getElementById('skillsList');
-            const skillItems = skillsList.querySelectorAll('.skill-item');
+            if (!skillsList) {
+                return;
+            }
+            const skillItems = skillsList.querySelectorAll('.skill-pill');
             
             if (isActive) {
                 // Clear all active states first
@@ -1535,8 +1586,8 @@
             
             // Then mark the specific skill
             skillItems.forEach(item => {
-                const nameEl = item.querySelector('.skill-name');
-                if (nameEl && nameEl.textContent.toLowerCase().includes(skillName.toLowerCase())) {
+                const name = item.textContent.trim();
+                if (name && name.toLowerCase().includes(skillName.toLowerCase())) {
                     if (isActive) {
                         item.classList.add('active');
                     } else {

@@ -249,6 +249,82 @@
             min-height: 400px;
             max-height: 600px;
             overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .logs-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 15px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid rgba(255, 140, 0, 0.3);
+        }
+
+        .logs-section .card-title {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+
+        #logs {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+        }
+
+        .log-stats {
+            margin-top: 12px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255, 140, 0, 0.2);
+            font-size: 12px;
+            color: #b7bccb;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .log-stats-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 16px;
+        }
+
+        .log-stats-key {
+            color: #ffa500;
+            font-weight: 600;
+        }
+
+        .tool-stats {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            max-height: 120px;
+            overflow-y: auto;
+        }
+
+        .tool-stat {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .auto-scroll-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: #c5c9d6;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .auto-scroll-toggle input {
+            accent-color: #ff8c00;
+            cursor: pointer;
         }
         
         .log-entry {
@@ -669,9 +745,27 @@
                 </div>
                 
                 <div class="card logs-section">
-                    <h2 class="card-title">📋 Execution Log</h2>
+                    <div class="logs-header">
+                        <h2 class="card-title">📋 Execution Log</h2>
+                        <label class="auto-scroll-toggle">
+                            <input type="checkbox" id="autoScrollToggle" checked>
+                            Auto-scroll
+                        </label>
+                    </div>
                     <div id="logs">
                         <div class="empty-state">No activity yet. Send a message to start!</div>
+                    </div>
+                    <div class="log-stats" id="logStats">
+                        <div class="log-stats-row">
+                            <span><span class="log-stats-key">Elapsed:</span> <span id="statsElapsed">0.0s</span></span>
+                            <span><span class="log-stats-key">Tool calls:</span> <span id="statsToolCount">0</span></span>
+                        </div>
+                        <div>
+                            <span class="log-stats-key">Tool time:</span>
+                            <div class="tool-stats" id="statsToolTimes">
+                                <div class="tool-stat"><span>—</span><span>0.0s</span></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -711,9 +805,20 @@
     <script>
         let eventSource = null;
         let startTime = null;
+        let lastEventElapsed = 0;
+        let autoScrollEnabled = true;
+        let autoScrollUserEnabled = true;
+        let logScrollListenerAttached = false;
+        const LOG_AUTO_SCROLL_THRESHOLD = 40;
+        let toolCallCount = 0;
+        const toolStartTimes = new Map();
+        const toolTotalTimes = new Map();
         
         // Load skills on page load
-        window.addEventListener('DOMContentLoaded', loadSkills);
+        window.addEventListener('DOMContentLoaded', () => {
+            loadSkills();
+            initLogAutoScroll();
+        });
         
         function loadSkills() {
             fetch('/api/status')
@@ -770,6 +875,8 @@
             
             // Re-enable auto-scroll for new run
             autoScrollEnabled = true;
+            initLogAutoScroll();
+            resetLogStats();
             
             // Clear tasks list
             tasksList.innerHTML = '<div class="empty-state">No tasks yet</div>';
@@ -781,6 +888,7 @@
             }
             
             startTime = Date.now();
+            lastEventElapsed = 0;
             
             console.log('Making POST to /api/run...');
             
@@ -836,7 +944,10 @@
         }
         
         function handleEvent(event) {
-            const elapsed = event.elapsed || ((Date.now() - startTime) / 1000);
+            const totalElapsed = event.elapsed || ((Date.now() - startTime) / 1000);
+            const elapsed = Math.max(0, totalElapsed - lastEventElapsed);
+            lastEventElapsed = totalElapsed;
+            updateLogStatsElapsed(totalElapsed);
             
             switch (event.type) {
                 case 'user_message':
@@ -897,6 +1008,7 @@
                     const toolItem = addToolToList(event.data, event.timestamp);
                     toolItem.classList.add('active');
                     toolItem.dataset.toolName = event.data.tool_name;
+                    registerToolStart(event.data.tool_name, totalElapsed);
                     break;
                     
                 case 'tool_result':
@@ -913,6 +1025,7 @@
                         ? `${resultIcon} Tool failed: ${event.data.result.error || 'Unknown error'}`
                         : `${resultIcon} Tool result: ${resultStr}...`;
                     addLog(resultType, resultMsg, event.timestamp, elapsed);
+                    registerToolEnd(event.data.tool_name, totalElapsed);
                     
                     // Check if this is complete_task result with auto-activation message
                     if (event.data.tool_name === 'complete_task' && !event.data.error && event.data.result.message) {
@@ -1073,10 +1186,128 @@
             
             logsDiv.appendChild(logEntry);
             
-            // Always scroll to bottom on new log entry
-            logsDiv.scrollTop = logsDiv.scrollHeight;
+            // Auto-scroll only when enabled (disabled if user scrolled up)
+            if (autoScrollEnabled) {
+                logsDiv.scrollTop = logsDiv.scrollHeight;
+            }
             
             return logEntry;
+        }
+
+        function initLogAutoScroll() {
+            const logsDiv = document.getElementById('logs');
+            const autoScrollToggle = document.getElementById('autoScrollToggle');
+            if (!logsDiv) {
+                return;
+            }
+
+            if (autoScrollToggle) {
+                autoScrollUserEnabled = autoScrollToggle.checked;
+            }
+
+            if (!logScrollListenerAttached) {
+                logsDiv.addEventListener('scroll', () => {
+                    updateAutoScrollState(logsDiv);
+                });
+
+                if (autoScrollToggle) {
+                    autoScrollToggle.addEventListener('change', (event) => {
+                        autoScrollUserEnabled = event.target.checked;
+                        if (autoScrollUserEnabled) {
+                            autoScrollEnabled = true;
+                            logsDiv.scrollTop = logsDiv.scrollHeight;
+                        } else {
+                            autoScrollEnabled = false;
+                        }
+                    });
+                }
+
+                logScrollListenerAttached = true;
+            }
+
+            updateAutoScrollState(logsDiv);
+        }
+
+        function updateAutoScrollState(logsDiv) {
+            if (!autoScrollUserEnabled) {
+                autoScrollEnabled = false;
+                return;
+            }
+            const distanceFromBottom = logsDiv.scrollHeight - logsDiv.scrollTop - logsDiv.clientHeight;
+            autoScrollEnabled = distanceFromBottom <= LOG_AUTO_SCROLL_THRESHOLD;
+        }
+
+        function resetLogStats() {
+            toolCallCount = 0;
+            toolStartTimes.clear();
+            toolTotalTimes.clear();
+            updateLogStatsElapsed(0);
+            updateToolCallCount();
+            renderToolTimes();
+        }
+
+        function updateLogStatsElapsed(totalElapsed) {
+            const elapsedEl = document.getElementById('statsElapsed');
+            if (elapsedEl) {
+                elapsedEl.textContent = `${totalElapsed.toFixed(1)}s`;
+            }
+        }
+
+        function updateToolCallCount() {
+            const countEl = document.getElementById('statsToolCount');
+            if (countEl) {
+                countEl.textContent = String(toolCallCount);
+            }
+        }
+
+        function registerToolStart(toolName, totalElapsed) {
+            if (!toolName) {
+                return;
+            }
+            toolCallCount += 1;
+            updateToolCallCount();
+
+            const starts = toolStartTimes.get(toolName) || [];
+            starts.push(totalElapsed);
+            toolStartTimes.set(toolName, starts);
+        }
+
+        function registerToolEnd(toolName, totalElapsed) {
+            if (!toolName) {
+                return;
+            }
+            const starts = toolStartTimes.get(toolName);
+            if (!starts || starts.length === 0) {
+                return;
+            }
+            const startTime = starts.shift();
+            toolStartTimes.set(toolName, starts);
+
+            const duration = Math.max(0, totalElapsed - startTime);
+            const currentTotal = toolTotalTimes.get(toolName) || 0;
+            toolTotalTimes.set(toolName, currentTotal + duration);
+            renderToolTimes();
+        }
+
+        function renderToolTimes() {
+            const container = document.getElementById('statsToolTimes');
+            if (!container) {
+                return;
+            }
+            if (toolTotalTimes.size === 0) {
+                container.innerHTML = '<div class="tool-stat"><span>—</span><span>0.0s</span></div>';
+                return;
+            }
+
+            const entries = Array.from(toolTotalTimes.entries())
+                .sort((a, b) => b[1] - a[1]);
+
+            container.innerHTML = entries.map(([tool, seconds]) => `
+                <div class="tool-stat">
+                    <span>${escapeHtml(tool)}</span>
+                    <span>${seconds.toFixed(1)}s</span>
+                </div>
+            `).join('');
         }
         
         function removeSpinnerForTool(toolName) {

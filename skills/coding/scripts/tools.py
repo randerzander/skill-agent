@@ -4,7 +4,6 @@ Coding skill tools - write and execute Python code
 Uses coding model from config.yaml
 """
 import os
-import subprocess
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
@@ -19,25 +18,7 @@ console = Console()
 
 # Add parent directory to path to import utils
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-from utils import load_config, get_scratch_dir
-
-
-def _read_file_disabled(filepath: str) -> str:
-    """
-    DISABLED: Read a file from the scratch directory.
-    This tool has been disabled to prevent context overflow.
-    Use grep_file instead to search for specific patterns.
-    
-    Args:
-        filepath: Path to file relative to project root (e.g., 'scratch/data/models.html')
-    
-    Returns:
-        JSON string with error message
-    """
-    import json
-    return json.dumps({
-        "error": "read_file is disabled. Use grep_file to search for specific patterns, or generate_code to write Python code that processes the file."
-    })
+from utils import load_config, get_scratch_dir, detect_new_files, sanitize_filename
 
 
 def generate_code(task_description: str, context: str = "") -> str:
@@ -55,7 +36,6 @@ def generate_code(task_description: str, context: str = "") -> str:
     import json
     import time
     import subprocess
-    import hashlib
     
     try:
         config = load_config()
@@ -150,15 +130,15 @@ Output only the Python code, no explanations."""
                     elif "```" in code:
                         code = code.split("```")[1].split("```")[0].strip()
                     
-                    # Generate filename from task description hash
-                    task_hash = hashlib.md5(task_description.encode()).hexdigest()[:8]
-                    filename = f"generated_{task_hash}.py"
+                    # Generate filename using base LLM for a meaningful name
+                    filename = _generate_script_filename(task_description, config)
                     
                     # Save code to scratch/code/
                     scratch_dir = get_scratch_dir()
                     code_dir = scratch_dir / "code"
                     code_dir.mkdir(parents=True, exist_ok=True)
-                    
+
+                    filename = _ensure_unique_filename(code_dir, filename)
                     code_file = code_dir / filename
                     with open(code_file, 'w') as f:
                         f.write(code)
@@ -191,17 +171,13 @@ Output only the Python code, no explanations."""
                         truncated = True
                     
                     # Detect new files created during execution
-                    new_files = []
-                    if scratch_dir.exists():
-                        for file_path in scratch_dir.rglob('*'):
-                            if file_path.is_file():
-                                file_mtime = file_path.stat().st_mtime
-                                if file_mtime >= exec_start:
-                                    rel_path = file_path.relative_to(scratch_dir)
-                                    new_files.append({
-                                        'path': str(rel_path),
-                                        'size': file_path.stat().st_size
-                                    })
+                    new_files = detect_new_files(
+                        exec_start,
+                        scratch_dir,
+                        skip_internal=False,
+                        skip_tasks=False,
+                        skip_code_py=False
+                    )
                     
                     # Build summary with model, timing, and task description
                     summary = Text()
@@ -277,27 +253,71 @@ Output only the Python code, no explanations."""
         })
 
 
-def _write_code_deprecated(filename: str, code: str) -> str:
-    """
-    DEPRECATED: This tool has been removed. Use generate_code() instead.
-    generate_code() now handles code generation, saving, and execution in one step.
-    """
-    import json
-    return json.dumps({
-        "error": "write_code is deprecated. Use generate_code(task_description, context) which generates, saves, and executes code automatically."
-    })
+def _generate_script_filename(task_description: str, config: dict) -> str:
+    """Use the base LLM to generate a meaningful Python filename."""
+    import os
+    from openai import OpenAI
+
+    openai_config = config.get('openai', {})
+    base_url = openai_config.get('base_url', 'https://openrouter.ai/api/v1')
+    model = openai_config.get('model')
+    api_key_env = openai_config.get('api_key_env', 'OPENROUTER_API_KEY')
+    api_key = os.getenv(api_key_env)
+
+    if not model or not api_key:
+        return _fallback_filename(task_description)
+
+    prompt = (
+        "Create a short, meaningful Python filename for this task. "
+        "Return only the filename without extension. "
+        "Use lowercase letters, numbers, and underscores only.\n\n"
+        f"Task: {task_description}"
+    )
+
+    try:
+        client = OpenAI(base_url=base_url, api_key=api_key)
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2
+        )
+        raw_name = (response.choices[0].message.content or "").strip()
+        # Remove code fences or extra lines if present
+        if "```" in raw_name:
+            raw_name = raw_name.split("```")[1].strip()
+        raw_name = raw_name.splitlines()[0].strip()
+        if raw_name.lower().endswith(".py"):
+            raw_name = raw_name[:-3]
+
+        sanitized = sanitize_filename(raw_name, max_length=60).strip("_")
+        if not sanitized:
+            return _fallback_filename(task_description)
+        return f"{sanitized}.py"
+    except Exception:
+        return _fallback_filename(task_description)
 
 
-def _run_code_deprecated(filename: str) -> str:
-    """
-    DEPRECATED: This tool has been removed. Use generate_code() instead.
-    generate_code() now handles code generation, saving, and execution in one step.
-    """
-    import json
-    return json.dumps({
-        "error": "run_code is deprecated. Use generate_code(task_description, context) which generates, saves, and executes code automatically."
-    })
+def _fallback_filename(task_description: str) -> str:
+    """Fallback filename if LLM naming fails."""
+    base = sanitize_filename(task_description, max_length=40).strip("_")
+    if not base:
+        base = "generated_script"
+    return f"{base}.py"
 
+
+def _ensure_unique_filename(code_dir: Path, filename: str) -> str:
+    """Ensure filename is unique within the code directory."""
+    import time
+    if not (code_dir / filename).exists():
+        return filename
+
+    stem = filename[:-3] if filename.endswith(".py") else filename
+    for i in range(1, 1000):
+        candidate = f"{stem}_{i}.py"
+        if not (code_dir / candidate).exists():
+            return candidate
+
+    return f"{stem}_{int(time.time())}.py"
 
 def grep_file(filepath: str, pattern: str, case_sensitive: bool = True, max_results: int = 100) -> str:
     """
@@ -414,4 +434,3 @@ def grep_file(filepath: str, pattern: str, case_sensitive: bool = True, max_resu
         return json.dumps({
             "error": f"Failed to search file: {str(e)}"
         })
-

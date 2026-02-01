@@ -1,13 +1,8 @@
 """Utility functions for the agent framework."""
-import os
 import re
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional
-from openai import OpenAI
-from dotenv import load_dotenv
-
-load_dotenv()
 
 
 def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
@@ -30,33 +25,6 @@ def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
             return config or {}
     except Exception:
         return {}
-
-
-def get_openai_client(config_path: str = "config.yaml", api_key: Optional[str] = None) -> OpenAI:
-    """
-    Get a configured OpenAI client instance.
-    
-    Args:
-        config_path: Path to config file
-        api_key: Optional API key override
-    
-    Returns:
-        Configured OpenAI client
-    """
-    config = load_config(config_path)
-    openai_config = config.get('openai', {})
-    
-    # Get API key from parameter, env var, or config
-    api_key_env = openai_config.get('api_key_env', 'OPENROUTER_API_KEY')
-    final_api_key = api_key or os.getenv(api_key_env)
-    
-    if not final_api_key:
-        raise ValueError(f"API key not found. Set {api_key_env} environment variable.")
-    
-    return OpenAI(
-        base_url=openai_config.get('base_url', 'https://openrouter.ai/api/v1'),
-        api_key=final_api_key
-    )
 
 
 def sanitize_filename(name: str, max_length: int = 100) -> str:
@@ -83,24 +51,43 @@ def get_scratch_dir() -> Path:
     return Path("scratch")
 
 
-def get_task_dir(task_type: str = "incomplete") -> Path:
-    """
-    Get task directory path.
-    
-    Args:
-        task_type: 'incomplete' or 'completed'
-    
-    Returns:
-        Path to task directory
-    """
-    return get_scratch_dir() / f"{task_type}_tasks"
-
-
 def ensure_scratch_dir() -> Path:
     """Ensure scratch directory exists and return path."""
     scratch_dir = get_scratch_dir()
     scratch_dir.mkdir(exist_ok=True)
     return scratch_dir
+
+
+def detect_new_files(
+    since_timestamp: float,
+    scratch_dir: Optional[Path] = None,
+    *,
+    skip_internal: bool = True,
+    skip_tasks: bool = True,
+    skip_code_py: bool = True,
+) -> list[dict]:
+    """Detect files in scratch/ modified at or after a given timestamp."""
+    new_files = []
+    base_dir = scratch_dir or get_scratch_dir()
+    if base_dir.exists():
+        for file_path in base_dir.rglob('*'):
+            if not file_path.is_file():
+                continue
+            if skip_internal and file_path.name in ['USER_QUERY.txt', 'CURRENT_TASK.txt']:
+                continue
+            if skip_tasks and ('incomplete_tasks' in file_path.parts or 'completed_tasks' in file_path.parts):
+                continue
+            if skip_code_py and file_path.suffix == '.py' and 'code' in file_path.parts:
+                continue
+
+            file_mtime = file_path.stat().st_mtime
+            if file_mtime >= since_timestamp:
+                rel_path = file_path.relative_to(base_dir)
+                new_files.append({
+                    'path': str(rel_path),
+                    'size': file_path.stat().st_size
+                })
+    return new_files
 
 
 # Conversation history management for tools

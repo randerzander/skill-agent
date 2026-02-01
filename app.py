@@ -9,7 +9,7 @@ import threading
 import queue
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
-from agent import AgentSkillsFramework, SkillLoader
+from agent import AgentSkillsFramework
 from dotenv import load_dotenv
 from keepalive import start_keepalive_thread
 

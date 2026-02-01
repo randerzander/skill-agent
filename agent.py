@@ -21,7 +21,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.spinner import Spinner
 from rich.text import Text
-from utils import load_config, get_scratch_dir, get_task_dir, ensure_scratch_dir
+from utils import load_config, get_scratch_dir, detect_new_files
 
 # Load environment variables
 load_dotenv()
@@ -812,6 +812,62 @@ Activate available skills to complete tasks. After each skill, consider whether 
         except Exception as e:
             # Don't fail on logging errors
             console.print(f"[dim red]Warning: Failed to log: {e}[/dim red]")
+
+    def _activate_skill(
+        self,
+        skill_name: str,
+        *,
+        current_task_info: str = "",
+        auto_activated: bool = False,
+        activation_message_prefix: Optional[str] = None,
+    ) -> tuple[str, list, int, str]:
+        """Activate a skill and return its content, tools, token estimate, and activation message."""
+        skill_content = self.skill_loader.activate_skill(skill_name)
+        active_tools = self.skill_loader.get_skill_tools(skill_name)
+        token_estimate = len(skill_content) // 4
+
+        activation_prefix = activation_message_prefix or f"Skill '{skill_name}' activated."
+        activation_msg = (
+            f"{activation_prefix}\n\nInstructions:\n{skill_content}\n\n"
+            f"You can access tools from this skill.{current_task_info}"
+        )
+
+        log_entry = {
+            "type": "skill_activated",
+            "skill_name": skill_name,
+            "tools_count": len(active_tools),
+            "tokens_added": token_estimate,
+        }
+        if auto_activated:
+            log_entry["auto_activated"] = True
+
+        self._log_message(log_entry)
+
+        return skill_content, active_tools, token_estimate, activation_msg
+
+    def _finalize_response(self, user_input: str, response_text: str, query_start_time: float, live=None) -> tuple[str, bool]:
+        """Finalize response: verify links, detect files, create report, log, return response."""
+        verified_response, should_retry = self.skill_loader._auto_verify_links(response_text, live=live)
+        if should_retry:
+            return "", True
+
+        new_files = detect_new_files(query_start_time, get_scratch_dir())
+        verified_response = self._append_files_list(verified_response, new_files)
+
+        html_report = self._create_html_report(user_input, verified_response, new_files)
+        catbox_url = self._upload_to_catbox(html_report)
+
+        if catbox_url:
+            verified_response += f"\n\n**Report URL:** {catbox_url}\n"
+
+        self._log_message({
+            "type": "final_response",
+            "content": verified_response,
+            "report_url": catbox_url if catbox_url else None,
+            "new_files": new_files if new_files else None
+        })
+
+        return verified_response, False
     
     def run(self, user_input: str, max_iterations: int = None) -> str:
         """
@@ -863,29 +919,17 @@ Activate available skills to complete tasks. After each skill, consider whether 
         
         # Auto-activate planning skill at the beginning
         active_skill = "planning"
-        skill_content = self.skill_loader.activate_skill("planning")
-        active_tools = self.skill_loader.get_skill_tools("planning")
-        
-        # Calculate token estimate
-        token_estimate = len(skill_content) // 4
-        
-        console.print(f"[green]✓[/green] Skill auto-activated: [bold]planning[/bold] [dim](~{token_estimate} tokens added)[/dim]")
-        
-        # Include CURRENT_TASK if it exists
         current_task_info = self._get_current_task_info()
-        
+        skill_content, active_tools, token_estimate, skill_message = self._activate_skill(
+            "planning",
+            current_task_info=current_task_info,
+            auto_activated=True
+        )
+
+        console.print(f"[green]✓[/green] Skill auto-activated: [bold]planning[/bold] [dim](~{token_estimate} tokens added)[/dim]")
+
         # Inject skill content and current task info into messages
-        skill_message = f"Skill 'planning' activated.\n\nInstructions:\n{skill_content}\n\nYou can access tools from this skill.{current_task_info}"
         self.messages.append({"role": "assistant", "content": skill_message})
-        
-        # Log the auto-activation
-        self._log_message({
-            "type": "skill_activated",
-            "skill_name": "planning",
-            "tools_count": len(active_tools),
-            "tokens_added": token_estimate,
-            "auto_activated": True
-        })
         
         iteration = 0
         rate_limit_retries = 0
@@ -1147,27 +1191,14 @@ Activate available skills to complete tasks. After each skill, consider whether 
                             
                             if skill_name in self.skill_loader.skills:
                                 # Activate the skill (ignore any arguments passed by LLM)
-                                skill_content = self.skill_loader.activate_skill(skill_name)
-                                active_skill = skill_name
-                                active_tools = self.skill_loader.get_skill_tools(skill_name)
-                                
-                                # Calculate approximate token count (rough estimate: ~4 chars per token)
-                                token_estimate = len(skill_content) // 4
-                                
-                                console.print(f"[green]✓[/green] Skill activated: [bold]{skill_name}[/bold] [dim](~{token_estimate} tokens added)[/dim]")
-                                
-                                # Log skill activation completion
-                                self._log_message({
-                                    "type": "skill_activated",
-                                    "skill_name": skill_name,
-                                    "tools_count": len(active_tools),
-                                    "tokens_added": token_estimate
-                                })
-                                
-                                # Add tool response confirming activation
                                 current_task_info = self._get_current_task_info()
-                                
-                                activation_msg = f"Skill '{skill_name}' activated.\n\nInstructions:\n{skill_content}\n\nYou can access tools from this skill.{current_task_info}"
+                                skill_content, active_tools, token_estimate, activation_msg = self._activate_skill(
+                                    skill_name,
+                                    current_task_info=current_task_info
+                                )
+                                active_skill = skill_name
+
+                                console.print(f"[green]✓[/green] Skill activated: [bold]{skill_name}[/bold] [dim](~{token_estimate} tokens added)[/dim]")
                                 self.messages.append({
                                     "role": "tool",
                                     "tool_call_id": tool_call.id,
@@ -1244,7 +1275,6 @@ Activate available skills to complete tasks. After each skill, consider whether 
                                 continue
                             
                             # Log deactivation of old skill if one was active and switch to new
-                            old_skill = active_skill  # Store before switching
                             if active_skill:
                                 self._log_message({
                                     "type": "skill_deactivated",
@@ -1252,23 +1282,16 @@ Activate available skills to complete tasks. After each skill, consider whether 
                                 })
                             
                             # Activate the new skill
-                            skill_content = self.skill_loader.activate_skill(new_skill_name)
+                            current_task_info = self._get_current_task_info()
+                            skill_content, active_tools, token_estimate, activation_msg = self._activate_skill(
+                                new_skill_name,
+                                current_task_info=current_task_info,
+                                activation_message_prefix=f"Switched to skill '{new_skill_name}'."
+                            )
                             active_skill = new_skill_name
-                            active_tools = self.skill_loader.get_skill_tools(new_skill_name)
-                            
-                            # Calculate token estimate
-                            token_estimate = len(skill_content) // 4
                             
                             # Combined log line for skill switch
                             console.print(f"[green]✓[/green] Skill switch: [bold]{new_skill_name}[/bold] [dim](~{token_estimate} tokens added)[/dim]")
-                            
-                            # Log skill activation
-                            self._log_message({
-                                "type": "skill_activated",
-                                "skill_name": new_skill_name,
-                                "tools_count": len(active_tools),
-                                "tokens_added": token_estimate
-                            })
                             
                             # Log tool execution result for UI spinner
                             self._log_message({
@@ -1278,11 +1301,6 @@ Activate available skills to complete tasks. After each skill, consider whether 
                                 "params": {"skill_name": new_skill_name},
                                 "result": {"result": f"Switched to {new_skill_name}"}
                             })
-                            
-                            # Include CURRENT_TASK if it exists
-                            current_task_info = self._get_current_task_info()
-                            
-                            activation_msg = f"Switched to skill '{new_skill_name}'.\n\nInstructions:\n{skill_content}\n\nYou can access tools from this skill.{current_task_info}"
                             
                             self.messages.append({
                                 "role": "tool",
@@ -1374,23 +1392,19 @@ Activate available skills to complete tasks. After each skill, consider whether 
                                     
                                     # Auto-activate answer skill
                                     if "answer" in self.skill_loader.skills:
-                                        skill_content = self.skill_loader.activate_skill("answer")
+                                        skill_content, active_tools, token_estimate, activation_msg = self._activate_skill(
+                                            "answer",
+                                            current_task_info="",
+                                            auto_activated=True
+                                        )
                                         active_skill = "answer"
-                                        active_tools = self.skill_loader.get_skill_tools("answer")
-                                        
-                                        token_estimate = len(skill_content) // 4
+
                                         console.print(f"[green]✓[/green] Skill auto-activated: [bold]answer[/bold] [dim](~{token_estimate} tokens added)[/dim]")
-                                        
-                                        # Log the auto-activation
-                                        self._log_message({
-                                            "type": "skill_activated",
-                                            "skill_name": "answer",
-                                            "tools_count": len(active_tools),
-                                            "tokens_added": token_estimate,
-                                            "auto_activated": True
-                                        })
-                                        
-                                        response_msg = f"Task {task_number} marked as complete. All tasks completed!\n\nSkill 'answer' activated.\n\nInstructions:\n{skill_content}\n\nYou can now synthesize results, verify citations, and submit your final answer."
+
+                                        response_msg = (
+                                            f"Task {task_number} marked as complete. All tasks completed!\n\n"
+                                            f"{activation_msg}\n\nYou can now synthesize results, verify citations, and submit your final answer."
+                                        )
                                     else:
                                         response_msg = f"Task {task_number} marked as complete. No more tasks remaining."
                                 
@@ -1524,27 +1538,19 @@ Activate available skills to complete tasks. After each skill, consider whether 
                                 # Check if this was a submit tool call - if so, end execution
                                 if isinstance(result, dict) and result.get('status') == 'FINAL_ANSWER_SUBMITTED':
                                     final_answer = result.get('final_answer', '')
-                                    
-                                    # Detect new files and append to answer
-                                    new_files = self._detect_new_files(query_start_time)
-                                    final_answer = self._append_files_list(final_answer, new_files)
-                                    
-                                    # Create HTML report and upload to catbox.moe
-                                    html_report = self._create_html_report(user_input, final_answer, new_files)
-                                    catbox_url = self._upload_to_catbox(html_report)
-                                    
-                                    # Add the catbox URL to the final answer
-                                    if catbox_url:
-                                        final_answer += f"\n\n**Report URL:** {catbox_url}\n"
-                                    
-                                    self._log_message({
-                                        "type": "final_response",
-                                        "content": final_answer,
-                                        "new_files": new_files if new_files else None,
-                                        "report_url": catbox_url if catbox_url else None
-                                    })
-                                    
-                                    # Return the final answer with the URL included
+                                    final_answer, should_retry = self._finalize_response(
+                                        user_input,
+                                        final_answer,
+                                        query_start_time,
+                                        live=live
+                                    )
+                                    if should_retry:
+                                        self.messages.append({
+                                            "role": "user",
+                                            "content": "Your previous response contained invalid or inaccessible links. Please use the web tool to find valid sources and provide an updated answer with working links."
+                                        })
+                                        continue
+
                                     return final_answer
                     
                     # Continue to next iteration
@@ -1603,24 +1609,18 @@ You must complete all tasks before finishing. Use the skill_switch tool to switc
                     
                     # Auto-activate answer skill
                     if "answer" in self.skill_loader.skills:
-                        skill_content = self.skill_loader.activate_skill("answer")
+                        skill_content, active_tools, token_estimate, activation_msg = self._activate_skill(
+                            "answer",
+                            current_task_info="",
+                            auto_activated=True,
+                            activation_message_prefix="All tasks are complete.\n\nSkill 'answer' activated."
+                        )
                         active_skill = "answer"
-                        active_tools = self.skill_loader.get_skill_tools("answer")
-                        
-                        token_estimate = len(skill_content) // 4
+
                         console.print(f"[green]✓[/green] Skill auto-activated: [bold]answer[/bold] [dim](~{token_estimate} tokens added)[/dim]")
-                        
-                        # Log the auto-activation
-                        self._log_message({
-                            "type": "skill_activated",
-                            "skill_name": "answer",
-                            "tools_count": len(active_tools),
-                            "tokens_added": token_estimate,
-                            "auto_activated": True
-                        })
-                        
+
                         # Add activation message to force agent to use answer skill
-                        activation_msg = f"All tasks are complete.\n\nSkill 'answer' activated.\n\nInstructions:\n{skill_content}\n\nYou must now synthesize the results and submit your final answer."
+                        activation_msg = f"{activation_msg}\n\nYou must now synthesize the results and submit your final answer."
                         self.messages.append({
                             "role": "user",
                             "content": activation_msg
@@ -1663,9 +1663,13 @@ You must complete all tasks before finishing. Use the skill_switch tool to switc
                             "trace": reasoning_trace
                         })
                 
-                # Automatically verify links in final response
-                verified_response, should_retry = self.skill_loader._auto_verify_links(final_response, live=live)
-                
+                verified_response, should_retry = self._finalize_response(
+                    user_input,
+                    final_response,
+                    query_start_time,
+                    live=live
+                )
+
                 if should_retry:
                     # Add verification feedback as a system message
                     self.messages.append({
@@ -1674,31 +1678,7 @@ You must complete all tasks before finishing. Use the skill_switch tool to switc
                     })
                     # Continue loop to let agent try again
                     continue
-                
-                # Log final response
-                self._log_message({
-                    "type": "final_response",
-                    "content": verified_response
-                })
-                
-                # Detect new files and append to response
-                new_files = self._detect_new_files(query_start_time)
-                verified_response = self._append_files_list(verified_response, new_files)
-                
-                # Create HTML report and upload to catbox.moe
-                html_report = self._create_html_report(user_input, verified_response, new_files)
-                catbox_url = self._upload_to_catbox(html_report)
-                
-                if catbox_url:
-                    verified_response += f"\n\n**Report URL:** {catbox_url}\n"
-                    # Update the log with the URL
-                    self._log_message({
-                        "type": "final_response",
-                        "content": verified_response,
-                        "report_url": catbox_url,
-                        "new_files": new_files if new_files else None
-                    })
-                
+
                 return verified_response
                     
             except Exception as e:
@@ -1721,54 +1701,13 @@ You must complete all tasks before finishing. Use the skill_switch tool to switc
                 final_response = content
                 break
         
-        # Verify links in the response if enabled
-        verified_response, _ = self.skill_loader._auto_verify_links(final_response)
-        
-        # Detect new files and append to response
-        new_files = self._detect_new_files(query_start_time)
-        verified_response = self._append_files_list(verified_response, new_files)
-        
-        # Create HTML report and upload to catbox.moe
-        html_report = self._create_html_report(user_input, verified_response, new_files)
-        catbox_url = self._upload_to_catbox(html_report)
-        
-        if catbox_url:
-            verified_response += f"\n\n**Report URL:** {catbox_url}\n"
-        
-        # Log final response
-        self._log_message({
-            "type": "final_response",
-            "content": verified_response,
-            "report_url": catbox_url if catbox_url else None,
-            "new_files": new_files if new_files else None
-        })
-        
+        verified_response, _ = self._finalize_response(
+            user_input,
+            final_response,
+            query_start_time
+        )
+
         return verified_response
-    
-    def _detect_new_files(self, query_start_time: float) -> list:
-        """Detect files created in scratch/ after query start time"""
-        new_files = []
-        scratch_dir = get_scratch_dir()
-        if scratch_dir.exists():
-            for file_path in scratch_dir.rglob('*'):
-                if file_path.is_file():
-                    # Skip internal files
-                    if file_path.name in ['USER_QUERY.txt', 'CURRENT_TASK.txt']:
-                        continue
-                    if 'incomplete_tasks' in file_path.parts or 'completed_tasks' in file_path.parts:
-                        continue
-                    if file_path.suffix == '.py' and 'code' in file_path.parts:
-                        continue
-                    
-                    # Check if file was created/modified after query start
-                    file_mtime = file_path.stat().st_mtime
-                    if file_mtime >= query_start_time:
-                        rel_path = file_path.relative_to(scratch_dir)
-                        new_files.append({
-                            'path': str(rel_path),
-                            'size': file_path.stat().st_size
-                        })
-        return new_files
     
     def _append_files_list(self, response: str, new_files: list) -> str:
         """No longer appends file list - files are handled separately (images displayed, others ignored)"""

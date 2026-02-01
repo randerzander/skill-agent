@@ -551,11 +551,31 @@ class AgentSkillsFramework:
     def _initialize_scratch_directory(self):
         """Initialize/reset scratch directory structure"""
         import shutil
+        
+        # Check if we should preserve scratch/data
+        preserve_data = self.config.get('scratch', {}).get('preserve_data', False)
+        data_dir = SCRATCH_DIR / "data"
+        
+        # Backup data directory if preserving
+        data_backup = None
+        if preserve_data and data_dir.exists():
+            import tempfile
+            data_backup = tempfile.mkdtemp()
+            shutil.copytree(data_dir, Path(data_backup) / "data")
+        
+        # Remove scratch directory
         if SCRATCH_DIR.exists():
             shutil.rmtree(SCRATCH_DIR)
+        
+        # Recreate directory structure
         SCRATCH_DIR.mkdir(exist_ok=True)
         (SCRATCH_DIR / "incomplete_tasks").mkdir(exist_ok=True)
         (SCRATCH_DIR / "completed_tasks").mkdir(exist_ok=True)
+        
+        # Restore data directory if it was backed up
+        if data_backup:
+            shutil.copytree(Path(data_backup) / "data", data_dir)
+            shutil.rmtree(data_backup)
     
     def _get_current_task_info(self) -> str:
         """Get current task info as formatted string, or empty string if none"""
@@ -804,6 +824,9 @@ Activate available skills to complete tasks. After each skill, consider whether 
         Returns:
             The final response from the agent
         """
+        # Import conversation history utilities
+        from utils import set_conversation_history
+        
         # Get max_iterations from config if not provided
         if max_iterations is None:
             agent_config = self.config.get('agent', {})
@@ -812,10 +835,17 @@ Activate available skills to complete tasks. After each skill, consider whether 
         # Clean scratch directory at the beginning of each run
         self._initialize_scratch_directory()
         
+        # Record start time to track new files
+        import time
+        query_start_time = time.time()
+        
         # Reset conversation history for new query
         system_message = self.messages[0]  # Preserve system message
         self.messages = [system_message]
         self.reasoning_traces = {}  # Clear reasoning traces
+        
+        # Share conversation history with tools
+        set_conversation_history(self.messages)
         
         # Write user query to scratch directory for skills to access
         user_query_file = SCRATCH_DIR / "USER_QUERY.txt"
@@ -858,10 +888,10 @@ Activate available skills to complete tasks. After each skill, consider whether 
         })
         
         iteration = 0
+        rate_limit_retries = 0
+        max_rate_limit_retries = 3
         while iteration < max_iterations:
             iteration += 1
-            
-            console.print(f"[dim]═══ Iteration {iteration}/{max_iterations} ═══[/dim]")
             
             # Prepare tools based on active skill
             # Global tools are ALWAYS available
@@ -889,7 +919,7 @@ Activate available skills to complete tasks. After each skill, consider whether 
                     with Live(console=console, refresh_per_second=10, transient=False) as live:
                         # Start the spinner
                         live.update(self._create_progress_text(
-                            f"Calling LLM [{model_display}]", 
+                            f"Calling LLM [{model_display}] (Iteration {iteration}/{max_iterations})", 
                             0.0, 
                             spinner_frames[0],
                             f"~{input_tokens:,} tokens in"
@@ -918,7 +948,7 @@ Activate available skills to complete tasks. After each skill, consider whether 
                         while thread.is_alive():
                             elapsed = time.time() - start_time
                             live.update(self._create_progress_text(
-                                f"Calling LLM [{model_display}]", 
+                                f"Calling LLM [{model_display}] (Iteration {iteration}/{max_iterations})", 
                                 elapsed, 
                                 spinner_frames[frame_index % len(spinner_frames)],
                                 f"~{input_tokens:,} tokens in"
@@ -930,6 +960,28 @@ Activate available skills to complete tasks. After each skill, consider whether 
                         
                         # Check for errors
                         if api_error:
+                            # Check if it's a rate limit error
+                            if isinstance(api_error, Exception):
+                                error_str = str(api_error)
+                                if '429' in error_str and 'Rate limit exceeded' in error_str:
+                                    rate_limit_retries += 1
+                                    if rate_limit_retries <= max_rate_limit_retries:
+                                        # Show rate limit message
+                                        rate_limit_text = Text()
+                                        rate_limit_text.append("⚠", style="yellow bold")
+                                        rate_limit_text.append(f" Rate limit exceeded. Waiting 60s before retry ({rate_limit_retries}/{max_rate_limit_retries})...", style="yellow")
+                                        live.update(rate_limit_text)
+                                        
+                                        # Wait 60 seconds
+                                        time.sleep(60)
+                                        
+                                        # Retry - decrement iteration so we don't count this against our limit
+                                        iteration -= 1
+                                        console.print(f"[yellow]⟳[/yellow] Retrying after rate limit wait...")
+                                        continue
+                                    else:
+                                        console.print(f"[red]✗[/red] Max rate limit retries ({max_rate_limit_retries}) exceeded")
+                            
                             raise api_error
                         
                         if response is None:
@@ -956,7 +1008,8 @@ Activate available skills to complete tasks. After each skill, consider whether 
                         final_text.append("✓", style="green bold")
                         final_text.append(f" LLM [{model_display}] ", style="dim")
                         final_text.append(f"{input_tokens:,} prompt + {output_tokens:,} completion = {total_tokens:,} total ", style="blue")
-                        final_text.append(f"({elapsed:.1f}s)", style="green")
+                        final_text.append(f"({elapsed:.1f}s) ", style="green")
+                        final_text.append(f"[Iteration {iteration}/{max_iterations}]", style="dim")
                         live.update(final_text)
                 else:
                     # Non-interactive mode - just make the call without spinner
@@ -1015,6 +1068,29 @@ Activate available skills to complete tasks. After each skill, consider whether 
                 
                 # Check if LLM wants to call a tool
                 if message.tool_calls:
+                    # First, check if any tool calls have parse errors
+                    has_parse_error = False
+                    for tc in message.tool_calls:
+                        test_parse = self._safe_parse_json(tc.function.arguments)
+                        if "_parse_error" in test_parse:
+                            has_parse_error = True
+                            console.print(f"[red]✗[/red] Tool call has malformed JSON arguments: {tc.function.name}")
+                            console.print(f"[dim]Parse error: {test_parse['_parse_error']}[/dim]")
+                            break
+                    
+                    # If there's a parse error, don't add the malformed message to history
+                    # Instead, add a generic instruction to retry with valid JSON
+                    if has_parse_error:
+                        self.messages.append({
+                            "role": "assistant",
+                            "content": "I need to call a tool but generated invalid JSON."
+                        })
+                        self.messages.append({
+                            "role": "user",
+                            "content": "Your tool call had malformed JSON arguments. Please follow the tool argument schema exactly. Ensure all strings are properly escaped, especially code with newlines. Try again with valid JSON."
+                        })
+                        continue
+                    
                     # Add assistant message with tool calls to history
                     assistant_msg = {
                         "role": "assistant",
@@ -1063,18 +1139,7 @@ Activate available skills to complete tasks. After each skill, consider whether 
                         function_name = tool_call.function.name
                         function_args = self._safe_parse_json(tool_call.function.arguments)
                         
-                        # Check if parsing failed
-                        if "_parse_error" in function_args:
-                            # Add error response
-                            self.messages.append({
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "content": json.dumps({
-                                    "error": f"Failed to parse tool arguments: {function_args['_parse_error']}",
-                                    "raw_arguments": function_args.get("_raw", "")[:500]
-                                })
-                            })
-                            continue
+                        # Note: Parse errors are already handled above - we won't reach here with malformed JSON
                         
                         # Check if this is a skill activation request (new format: activate_SKILLNAME)
                         if function_name.startswith("activate_"):
@@ -1178,9 +1243,9 @@ Activate available skills to complete tasks. After each skill, consider whether 
                                 })
                                 continue
                             
-                            # Log deactivation of old skill if one was active
+                            # Log deactivation of old skill if one was active and switch to new
+                            old_skill = active_skill  # Store before switching
                             if active_skill:
-                                console.print(f"[yellow]↩[/yellow] Deactivated skill: [bold]{active_skill}[/bold]")
                                 self._log_message({
                                     "type": "skill_deactivated",
                                     "skill_name": active_skill
@@ -1194,7 +1259,8 @@ Activate available skills to complete tasks. After each skill, consider whether 
                             # Calculate token estimate
                             token_estimate = len(skill_content) // 4
                             
-                            console.print(f"[green]✓[/green] Switched to skill: [bold]{new_skill_name}[/bold] [dim](~{token_estimate} tokens added)[/dim]")
+                            # Combined log line for skill switch
+                            console.print(f"[green]✓[/green] Skill switch: [bold]{new_skill_name}[/bold] [dim](~{token_estimate} tokens added)[/dim]")
                             
                             # Log skill activation
                             self._log_message({
@@ -1428,22 +1494,25 @@ Activate available skills to complete tasks. After each skill, consider whether 
                                             final_text.append(f": {error_preview}", style="red dim")
                                         live.update(final_text)
                                     else:
-                                        final_text = Text()
-                                        final_text.append("✓ ", style="green")
-                                        final_text.append(f"{active_skill}.{script_name}", style="bold")
-                                        
-                                        # Show params
-                                        params_str = str(params)
-                                        if len(params_str) > 60:
-                                            params_str = params_str[:57] + "..."
-                                        final_text.append(f" {params_str}", style="dim")
-                                        
-                                        # Add result size if available
-                                        if "result" in result:
-                                            result_len = len(str(result["result"]))
-                                            final_text.append(f" → {result_len:,} chars", style="dim")
-                                        
-                                        live.update(final_text)
+                                        # Skip duplicate logging for generate_code - it has its own spinner summary
+                                        if script_name != "generate_code":
+                                            final_text = Text()
+                                            final_text.append("✓ ", style="green")
+                                            final_text.append(f"{active_skill}.{script_name}", style="bold")
+                                            
+                                            # Standard formatting for other tools
+                                            # Show params
+                                            params_str = str(params)
+                                            if len(params_str) > 60:
+                                                params_str = params_str[:57] + "..."
+                                            final_text.append(f" {params_str}", style="dim")
+                                            
+                                            # Add result size if available
+                                            if "result" in result:
+                                                result_len = len(str(result["result"]))
+                                                final_text.append(f" → {result_len:,} chars", style="dim")
+                                            
+                                            live.update(final_text)
                                 
                                 # Add tool response to messages
                                 self.messages.append({
@@ -1455,10 +1524,58 @@ Activate available skills to complete tasks. After each skill, consider whether 
                                 # Check if this was a submit tool call - if so, end execution
                                 if isinstance(result, dict) and result.get('status') == 'FINAL_ANSWER_SUBMITTED':
                                     final_answer = result.get('final_answer', '')
+                                    
+                                    # Detect new files created during this query
+                                    new_files = []
+                                    scratch_dir = get_scratch_dir()
+                                    if scratch_dir.exists():
+                                        for file_path in scratch_dir.rglob('*'):
+                                            if file_path.is_file():
+                                                # Skip internal files
+                                                if file_path.name in ['USER_QUERY.txt', 'CURRENT_TASK.txt']:
+                                                    continue
+                                                if 'incomplete_tasks' in file_path.parts or 'completed_tasks' in file_path.parts:
+                                                    continue
+                                                if file_path.suffix == '.py' and 'code' in file_path.parts:
+                                                    continue
+                                                
+                                                # Check if file was created/modified after query start
+                                                file_mtime = file_path.stat().st_mtime
+                                                if file_mtime >= query_start_time:
+                                                    rel_path = file_path.relative_to(scratch_dir)
+                                                    new_files.append({
+                                                        'path': str(rel_path),
+                                                        'size': file_path.stat().st_size
+                                                    })
+                                    
+                                    # Append new files to final answer if any were created
+                                    if new_files:
+                                        file_list = "\n\n---\n\n**Files created during this session:**\n\n"
+                                        for f in new_files:
+                                            size_kb = f['size'] / 1024
+                                            if size_kb < 1:
+                                                size_str = f"{f['size']} bytes"
+                                            else:
+                                                size_str = f"{size_kb:.1f} KB"
+                                            file_list += f"- `scratch/{f['path']}` ({size_str})\n"
+                                        final_answer += file_list
+                                    
+                                    # Create HTML report and upload to catbox.moe
+                                    html_report = self._create_html_report(user_input, final_answer, new_files)
+                                    catbox_url = self._upload_to_catbox(html_report)
+                                    
+                                    # Add the catbox URL to the final answer
+                                    if catbox_url:
+                                        final_answer += f"\n\n**Report URL:** {catbox_url}\n"
+                                    
                                     self._log_message({
                                         "type": "final_response",
-                                        "content": final_answer
+                                        "content": final_answer,
+                                        "new_files": new_files if new_files else None,
+                                        "report_url": catbox_url if catbox_url else None
                                     })
+                                    
+                                    # Return the final answer with the URL included
                                     return final_answer
                     
                     # Continue to next iteration
@@ -1595,6 +1712,19 @@ You must complete all tasks before finishing. Use the skill_switch tool to switc
                     "content": verified_response
                 })
                 
+                # Create HTML report and upload to catbox.moe
+                html_report = self._create_html_report(user_input, verified_response, [])
+                catbox_url = self._upload_to_catbox(html_report)
+                
+                if catbox_url:
+                    verified_response += f"\n\n**Report URL:** {catbox_url}\n"
+                    # Update the log with the URL
+                    self._log_message({
+                        "type": "final_response",
+                        "content": verified_response,
+                        "report_url": catbox_url
+                    })
+                
                 return verified_response
                     
             except Exception as e:
@@ -1620,13 +1750,107 @@ You must complete all tasks before finishing. Use the skill_switch tool to switc
         # Verify links in the response if enabled
         verified_response, _ = self.skill_loader._auto_verify_links(final_response)
         
+        # Create HTML report and upload to catbox.moe
+        html_report = self._create_html_report(user_input, verified_response, [])
+        catbox_url = self._upload_to_catbox(html_report)
+        
+        if catbox_url:
+            verified_response += f"\n\n**Report URL:** {catbox_url}\n"
+        
         # Log final response
         self._log_message({
             "type": "final_response",
-            "content": verified_response
+            "content": verified_response,
+            "report_url": catbox_url if catbox_url else None
         })
         
         return verified_response
+    
+    def _create_html_report(self, query: str, answer: str, new_files: list = None) -> str:
+        """Create an HTML report of the conversation"""
+        import markdown
+        from datetime import datetime
+        
+        # Convert markdown to HTML
+        answer_html = markdown.markdown(answer, extensions=['fenced_code', 'tables'])
+        
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Report - {datetime.now().strftime('%Y-%m-%d %H:%M')}</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 20px;
+            line-height: 1.6;
+            color: #333;
+        }}
+        h1 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }}
+        h2 {{ color: #34495e; margin-top: 30px; }}
+        .query {{ background: #ecf0f1; padding: 15px; border-left: 4px solid #3498db; margin: 20px 0; }}
+        .answer {{ margin: 20px 0; }}
+        code {{ background: #f4f4f4; padding: 2px 6px; border-radius: 3px; }}
+        pre {{ background: #2c3e50; color: #ecf0f1; padding: 15px; border-radius: 5px; overflow-x: auto; }}
+        .timestamp {{ color: #7f8c8d; font-size: 0.9em; }}
+        .files {{ background: #e8f5e9; padding: 15px; border-radius: 5px; margin-top: 20px; }}
+    </style>
+</head>
+<body>
+    <h1>🤖 Agent Skills Framework Report</h1>
+    <div class="timestamp">Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</div>
+    
+    <h2>Query</h2>
+    <div class="query">{query}</div>
+    
+    <h2>Response</h2>
+    <div class="answer">{answer_html}</div>
+</body>
+</html>"""
+        return html
+    
+    def _upload_to_catbox(self, html_content: str) -> str:
+        """Upload HTML content to litterbox.moe (renders in browser) and return URL"""
+        import requests
+        import tempfile
+        
+        try:
+            # Save HTML to temp file
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
+                f.write(html_content)
+                temp_path = f.name
+            
+            # Upload to litterbox.moe (1 hour expiry)
+            # litterbox.moe renders HTML files in the browser unlike catbox.moe
+            with open(temp_path, 'rb') as f:
+                response = requests.post(
+                    'https://litterbox.catbox.moe/resources/internals/api.php',
+                    data={
+                        'reqtype': 'fileupload',
+                        'time': '1h'  # Options: 1h, 12h, 24h, 72h
+                    },
+                    files={'fileToUpload': f},
+                    timeout=30
+                )
+            
+            # Clean up temp file
+            import os
+            os.unlink(temp_path)
+            
+            if response.status_code == 200:
+                url = response.text.strip()
+                console.print(f"[green]✓[/green] Report uploaded: {url} (expires in 1 hour)")
+                return url
+            else:
+                console.print(f"[yellow]⚠[/yellow] Failed to upload report (status {response.status_code})")
+                return None
+                
+        except Exception as e:
+            console.print(f"[yellow]⚠[/yellow] Failed to upload report: {e}")
+            return None
 
 
 def main():

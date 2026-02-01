@@ -12,6 +12,8 @@ For each entity, ask yourself who or what is this thing? Create separate sub-tas
 
 Consider whether after gathering info (and data) from the web, additional tasks are needed to process or analyze that information. If so, create "coding" sub-tasks for those processing or analysis steps.
 
+DO NOT COMPLETE TASKS WITHOUT USING TOOLS TO GATHER INFORMATION FIRST.
+
 ## Example
 **User Query:** "Plan a weekend trip to Paris including flights, accommodation, and sightseeing."
 1. Call "list_skills"

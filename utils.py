@@ -101,3 +101,85 @@ def ensure_scratch_dir() -> Path:
     scratch_dir = get_scratch_dir()
     scratch_dir.mkdir(exist_ok=True)
     return scratch_dir
+
+
+# Conversation history management for tools
+_conversation_history = None
+_history_modified_callback = None
+
+def set_conversation_history(messages: list, modified_callback=None):
+    """
+    Set the conversation history for tools to access.
+    Called by the agent to share its message history.
+    
+    Args:
+        messages: List of conversation messages
+        modified_callback: Optional callback to notify agent when history is modified
+    """
+    global _conversation_history, _history_modified_callback
+    _conversation_history = messages
+    _history_modified_callback = modified_callback
+
+
+def get_conversation_history() -> list:
+    """
+    Get the current conversation history.
+    Returns empty list if not set.
+    """
+    return _conversation_history if _conversation_history is not None else []
+
+
+def remove_last_tool_exchange(tool_name: str, log_message: str = None):
+    """
+    Remove the last assistant + tool message exchange for a specific tool.
+    Useful for deduplicating repeated tool calls.
+    
+    Args:
+        tool_name: Name of the tool to remove
+        log_message: Optional message to log about the removal
+    
+    Returns:
+        True if removed, False if not found
+    """
+    global _conversation_history, _history_modified_callback
+    
+    if not _conversation_history:
+        return False
+    
+    # Look backwards through history for the last tool call
+    assistant_idx = None
+    tool_idx = None
+    
+    for i in range(len(_conversation_history) - 1, -1, -1):
+        msg = _conversation_history[i]
+        
+        # Find tool response
+        if msg.get("role") == "tool" and tool_idx is None:
+            # Check if this matches our tool
+            # We need to find the corresponding assistant message
+            tool_idx = i
+            
+        # Find assistant message with tool calls
+        elif msg.get("role") == "assistant" and msg.get("tool_calls") and assistant_idx is None:
+            # Check if any tool call matches our tool name
+            for tc in msg.get("tool_calls", []):
+                if tc.get("function", {}).get("name") == tool_name:
+                    assistant_idx = i
+                    break
+            
+            # If we found both, remove them
+            if assistant_idx is not None and tool_idx is not None:
+                # Remove in reverse order to maintain indices
+                del _conversation_history[tool_idx]
+                del _conversation_history[assistant_idx]
+                
+                if log_message:
+                    print(f"[History] {log_message}")
+                
+                # Notify agent if callback is set
+                if _history_modified_callback:
+                    _history_modified_callback()
+                
+                return True
+    
+    return False

@@ -5,13 +5,13 @@ description: Write and execute Python code to process data, analyze scraped cont
 
 # Coding Skill
 
-Use this skill to write and execute Python code for data processing, analysis, or computation tasks.
+Use this skill to generate and execute Python code for data processing, analysis, or computation tasks.
 
 Most often the code result should produce an image of a plot or a textual output that answers the user's question. Those artifacts should be saved in scratch/
 
 ## When to use this skill
 
-- Process or analyze scraped web content from `scratch/` directory
+- Process or analyze scraped web content from `scratch/` directories
 - Perform calculations or data transformations
 - Parse JSON/JSONL files from search results or URL content
 - Generate reports or visualizations
@@ -26,25 +26,22 @@ The web skill saves content to the scratch directory:
 
 ## Workflow
 
-1. Use `generate_code` to have the coding model (qwen3-coder) write Python code for you
-2. Use `write_code` to save the generated (or hand-written) code to `scratch/code/`
-3. Use `run_code` to execute the script and get results
-4. Scripts can read files from `scratch/` to process scraped data
-5. Results are returned as text output
+1. Use `generate_code` to generate Python code, save it, and execute it in one step
+2. The code is automatically saved to `scratch/code/` and executed
+3. Results are returned including output, exit code, and any new files created
 
 ## Tools
 
-- `generate_code(task_description: str, context: str)` - Use coding model to generate Python code
-- `write_code(filename: str, code: str)` - Save Python code to scratch/code/
-- `run_code(filename: str)` - Execute a previously written script (file must exist)
+- `grep_file(filepath: str, pattern: str, case_sensitive: bool, max_results: int)` - Search for pattern in a file with regex
+- `generate_code(task_description: str, context: str)` - Generate Python code with Qwen, save it, execute it, and return results (all in one step)
 
-**Recommended**: Use `generate_code` first to let the specialized coding model write the code,
-then use `write_code` to save it, and `run_code` to execute it.
+**Note**: `read_file`, `write_code`, and `run_code` are disabled. Use `grep_file` to search files, 
+or `generate_code` which handles everything automatically.
 
 ## Tips
 
 - Always use relative paths starting with `scratch/` to read data files
 - Scripts run with the project root as working directory
 - Use standard libraries (json, pathlib, etc.) without installation
-- For data analysis, you can use pandas, numpy if needed
+- For data analysis & viz, you can use pandas, numpy, plotly, matplotlib if needed
 - Print results to stdout - they will be captured and returned

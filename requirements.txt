@@ -5,6 +5,7 @@ requests>=2.31.0
 html2text>=2024.2.26
 readability-lxml>=0.8.0
 rich>=13.0.0
+markdown>=3.0.0
 wikipedia-api>=0.7.1
 youtube-transcript-api>=0.6.0
 pypdfium2>=4.0.0
@@ -12,4 +13,3 @@ pypdfium2>=4.0.0
 # lancedb>=0.5.0  # Commented out: slow to install, only needed if retrieval.enabled=true in config.yaml
 pysearx @ git+https://github.com/randerzander/pysearx.git
 flask>=3.0.0
-rich>=13.0.0

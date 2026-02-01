@@ -227,18 +227,25 @@ def _get_wikipedia_content(url):
 def _get_pdf_content(url):
     """Extract text from PDF URL"""
     try:
-        import PyPDF2
+        import pypdfium2 as pdfium
         from io import BytesIO
         
         response = requests.get(url, timeout=30)
         response.raise_for_status()
         
-        pdf_file = BytesIO(response.content)
-        reader = PyPDF2.PdfReader(pdf_file)
+        # Load PDF from bytes
+        pdf_data = BytesIO(response.content)
+        pdf = pdfium.PdfDocument(pdf_data)
         
         text = ""
-        for page in reader.pages:
-            text += page.extract_text() + "\n\n"
+        for page_num in range(len(pdf)):
+            page = pdf[page_num]
+            textpage = page.get_textpage()
+            text += textpage.get_text_range() + "\n\n"
+            textpage.close()
+            page.close()
+        
+        pdf.close()
         
         title = url.split('/')[-1]
         _save_to_scratch(url, title, text)

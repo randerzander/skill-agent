@@ -40,6 +40,35 @@ state_lock = threading.Lock()
 sessions = {}  # session_id -> session_state
 sessions_lock = threading.Lock()
 
+# Session cleanup - remove sessions older than 1 hour
+SESSION_TIMEOUT = 3600  # 1 hour in seconds
+
+def cleanup_old_sessions():
+    """Remove sessions that haven't been active for SESSION_TIMEOUT seconds"""
+    with sessions_lock:
+        current_time = time.time()
+        expired_sessions = []
+        for session_id, session_state in sessions.items():
+            if session_state.get('start_time'):
+                age = current_time - session_state['start_time']
+                if age > SESSION_TIMEOUT:
+                    expired_sessions.append(session_id)
+        
+        for session_id in expired_sessions:
+            del sessions[session_id]
+            print(f"Cleaned up expired session: {session_id}")
+        
+        if expired_sessions:
+            print(f"Removed {len(expired_sessions)} expired session(s)")
+
+# Run cleanup periodically in background
+def session_cleanup_thread():
+    while True:
+        time.sleep(600)  # Run every 10 minutes
+        cleanup_old_sessions()
+
+threading.Thread(target=session_cleanup_thread, daemon=True).start()
+
 
 def get_client_ip():
     """Get the real client IP address from X-Forwarded-For header or remote_addr"""
@@ -324,7 +353,8 @@ def run_agent():
     # Get or create session ID
     session_id = request.json.get('session_id', None)
     if not session_id:
-        session_id = secrets.token_hex(16)
+        # Return error if no session ID provided - client should always provide one
+        return jsonify({'error': 'No session_id provided. Client must generate and provide a session ID.'}), 400
     
     client_ip = get_client_ip()
     print(f"[{client_ip}] User query: {user_input} (session: {session_id})")
@@ -381,9 +411,6 @@ def run_agent():
         
         agent_thread = threading.Thread(target=run_agent_thread)
         agent_thread.start()
-        
-        # Send session ID as first event
-        yield f"data: {json.dumps({'type': 'session_id', 'session_id': session_id})}\n\n"
         
         try:
             # Stream events as they come from the queue
@@ -498,22 +525,21 @@ def reconnect_session():
         
         session_state = sessions[session_id]
         
-        def generate():
-            """Generate SSE events for reconnection"""
-            # Send all events that occurred after last_event_index
-            with sessions_lock:
-                missed_events = session_state['logs'][last_event_index + 1:]
-                
-                for event in missed_events:
-                    yield f"data: {json.dumps(event)}\n\n"
-                
-                # If session is completed, send completion event
-                if session_state['completed']:
-                    yield f"data: {json.dumps({'type': 'complete', 'response': 'Session resumed'})}\n\n"
-                # If session is still running, keep connection open but no new events
-                # (new events will be delivered via the original connection when it reconnects)
+        # Copy missed events outside the lock to avoid blocking
+        missed_events = session_state['logs'][last_event_index + 1:]
+        is_completed = session_state['completed']
         
-        return Response(stream_with_context(generate()), mimetype='text/event-stream')
+    def generate():
+        """Generate SSE events for reconnection"""
+        # Send all missed events
+        for event in missed_events:
+            yield f"data: {json.dumps(event)}\n\n"
+        
+        # If session is completed, send completion event
+        if is_completed:
+            yield f"data: {json.dumps({'type': 'complete', 'response': 'Session resumed'})}\n\n"
+    
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
 
 @app.route('/api/chat_history')

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Session Persistence Test</title>
+</head>
+<body>
+    <h1>Session Persistence Test</h1>
+    <div id="status"></div>
+    <button onclick="testVisibilityChange()">Simulate Tab Switch</button>
+    <button onclick="checkLocalStorage()">Check localStorage</button>
+    <div id="logs" style="margin-top: 20px; font-family: monospace; white-space: pre-wrap;"></div>
+    
+    <script>
+        // Test session ID generation and persistence
+        function generateSessionId() {
+            return Array.from(crypto.getRandomValues(new Uint8Array(16)))
+                .map(b => b.toString(16).padStart(2, '0'))
+                .join('');
+        }
+        
+        function getOrCreateSessionId() {
+            let storedSessionId = localStorage.getItem('agent_session_id');
+            if (!storedSessionId) {
+                storedSessionId = generateSessionId();
+                localStorage.setItem('agent_session_id', storedSessionId);
+            }
+            return storedSessionId;
+        }
+        
+        // Initialize on load
+        window.addEventListener('DOMContentLoaded', () => {
+            const sessionId = getOrCreateSessionId();
+            log(`✓ Session ID initialized: ${sessionId}`);
+            updateStatus('Session ID loaded from localStorage');
+        });
+        
+        // Simulate visibility change
+        function testVisibilityChange() {
+            log('\n--- Simulating tab switch (visibility hidden) ---');
+            
+            // Trigger the visibilitychange event
+            const event = new Event('visibilitychange');
+            
+            // Mock document.hidden
+            Object.defineProperty(document, 'hidden', {
+                writable: true,
+                configurable: true,
+                value: true
+            });
+            
+            document.dispatchEvent(event);
+            log('✓ Visibility changed to hidden');
+            
+            setTimeout(() => {
+                log('\n--- Simulating tab switch back (visibility visible) ---');
+                Object.defineProperty(document, 'hidden', {
+                    writable: true,
+                    configurable: true,
+                    value: false
+                });
+                document.dispatchEvent(event);
+                log('✓ Visibility changed to visible');
+                log('  (In real app, this would trigger reconnection)');
+            }, 1000);
+        }
+        
+        function checkLocalStorage() {
+            const sessionId = localStorage.getItem('agent_session_id');
+            log(`\n--- localStorage Check ---`);
+            log(`Session ID: ${sessionId || '(not set)'}`);
+            log(`All keys: ${Object.keys(localStorage).join(', ')}`);
+        }
+        
+        function log(message) {
+            const logsDiv = document.getElementById('logs');
+            logsDiv.textContent += message + '\n';
+            console.log(message);
+        }
+        
+        function updateStatus(message) {
+            document.getElementById('status').textContent = message;
+        }
+    </script>
+</body>
+</html>

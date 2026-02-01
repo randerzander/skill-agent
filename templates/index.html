@@ -1115,7 +1115,7 @@
                 currentReader = response.body.getReader();
                 const decoder = new TextDecoder();
                 
-                // Reset event count for new session
+                // Reset event count for new conversation (not for reconnection)
                 eventCount = 0;
                 
                 function readStream() {
@@ -1166,15 +1166,7 @@
             lastEventElapsed = totalElapsed;
             updateLogStatsElapsed(totalElapsed);
             
-            // Handle session_id event
-            if (event.type === 'session_id') {
-                sessionId = event.session_id;
-                localStorage.setItem('agent_session_id', sessionId);
-                console.log('Received session ID:', sessionId);
-                return;
-            }
-            
-            // Increment event count for all non-session_id events
+            // Increment event count for tracking reconnection
             eventCount++;
             
             switch (event.type) {

@@ -1824,7 +1824,8 @@ You must complete all tasks before finishing. Use the skill_switch tool to switc
                 response = requests.post(
                     'https://litterbox.catbox.moe/resources/internals/api.php',
                     data={
-                        'reqtype': 'fileupload'
+                        'reqtype': 'fileupload',
+                        'time': '24h'  # Options: 1h, 12h, 24h, 72h
                     },
                     files={'fileToUpload': f},
                     timeout=30
@@ -1839,7 +1840,11 @@ You must complete all tasks before finishing. Use the skill_switch tool to switc
                 console.print(f"[green]✓[/green] Report uploaded: {url} (expires in 1 hour)")
                 return url
             else:
-                console.print(f"[yellow]⚠[/yellow] Failed to upload report (status {response.status_code})")
+                body_preview = response.text.strip()[:500]
+                if body_preview:
+                    console.print(f"[yellow]⚠[/yellow] Failed to upload report (status {response.status_code}): {body_preview}")
+                else:
+                    console.print(f"[yellow]⚠[/yellow] Failed to upload report (status {response.status_code})")
                 return None
                 
         except Exception as e:

@@ -930,7 +930,7 @@
                     
                 case 'final_response':
                     // Don't add to execution log, show in Result panel instead
-                    showResult(event.data.content);
+                    showResult(event.data.content, event.data.new_files);
                     break;
                     
                 case 'task_created':
@@ -973,9 +973,11 @@
             }
         }
         
-        function showResult(content) {
+        function showResult(content, newFiles) {
             const resultSection = document.getElementById('resultSection');
             const resultContent = document.getElementById('resultContent');
+            
+            console.log('showResult called with newFiles:', newFiles);
             
             // Show the result section
             resultSection.style.display = 'block';
@@ -993,7 +995,35 @@
             const fullContent = `**User Query:** ${userQuery}\n\n---\n\n${content}`;
             
             // Render markdown to HTML
-            const htmlContent = marked.parse(fullContent);
+            let htmlContent = marked.parse(fullContent);
+            
+            // Add images if any were created
+            if (newFiles && newFiles.length > 0) {
+                console.log('Processing newFiles:', newFiles);
+                const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp'];
+                const imageFiles = newFiles.filter(file => 
+                    imageExtensions.some(ext => file.path.toLowerCase().endsWith(ext))
+                );
+                
+                console.log('Filtered imageFiles:', imageFiles);
+                
+                if (imageFiles.length > 0) {
+                    htmlContent += '<div style="margin-top: 30px;"><h3 style="color: #34495e;">Generated Images</h3>';
+                    imageFiles.forEach(file => {
+                        const imagePath = `/scratch/${file.path}`;
+                        console.log('Adding image:', imagePath);
+                        htmlContent += `
+                            <div style="margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 8px; text-align: center;">
+                                <h4 style="color: #7f8c8d; font-size: 0.9em; margin-bottom: 10px;">${file.path}</h4>
+                                <img src="${imagePath}" alt="${file.path}" style="max-width: 100%; height: auto; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);" onerror="console.error('Failed to load image:', this.src);" />
+                            </div>
+                        `;
+                    });
+                    htmlContent += '</div>';
+                }
+            } else {
+                console.log('No newFiles or empty array');
+            }
             
             // Set the rendered HTML content
             resultContent.innerHTML = htmlContent;

@@ -232,7 +232,19 @@ class WebAgentWrapper:
                 self.add_event('task_activated', {'task_number': task_number}, elapsed)
         elif event_type == 'final_response':
             content = log_entry.get('content', '') if isinstance(log_entry, dict) else ''
-            self.add_event('final_response', {'content': content}, elapsed)
+            new_files = log_entry.get('new_files', []) if isinstance(log_entry, dict) else []
+            
+            # Filter to only include image files
+            image_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp'}
+            image_files = [
+                f for f in new_files 
+                if any(f.get('path', '').lower().endswith(ext) for ext in image_extensions)
+            ]
+            
+            self.add_event('final_response', {
+                'content': content,
+                'new_files': image_files
+            }, elapsed)
         
     def add_event(self, event_type, data, elapsed):
         """Add an event to the events list and optionally to queue for streaming"""
@@ -434,6 +446,25 @@ def health():
         'timestamp': datetime.now().isoformat(),
         'uptime': time.time() - agent_state.get('start_time', time.time()) if agent_state.get('start_time') else 0
     }), 200
+
+
+@app.route('/scratch/<path:filename>')
+def serve_scratch_file(filename):
+    """Serve files from scratch directory (for image display)"""
+    from flask import send_from_directory
+    from pathlib import Path
+    
+    scratch_dir = Path.cwd() / 'scratch'
+    file_path = scratch_dir / filename
+    
+    print(f"[Scratch] Serving file: {filename}")
+    print(f"[Scratch] Full path: {file_path}")
+    print(f"[Scratch] Exists: {file_path.exists()}")
+    
+    if not file_path.exists():
+        return jsonify({'error': 'File not found'}), 404
+    
+    return send_from_directory(scratch_dir, filename)
 
 
 if __name__ == '__main__':

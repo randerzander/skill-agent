@@ -1525,40 +1525,9 @@ Activate available skills to complete tasks. After each skill, consider whether 
                                 if isinstance(result, dict) and result.get('status') == 'FINAL_ANSWER_SUBMITTED':
                                     final_answer = result.get('final_answer', '')
                                     
-                                    # Detect new files created during this query
-                                    new_files = []
-                                    scratch_dir = get_scratch_dir()
-                                    if scratch_dir.exists():
-                                        for file_path in scratch_dir.rglob('*'):
-                                            if file_path.is_file():
-                                                # Skip internal files
-                                                if file_path.name in ['USER_QUERY.txt', 'CURRENT_TASK.txt']:
-                                                    continue
-                                                if 'incomplete_tasks' in file_path.parts or 'completed_tasks' in file_path.parts:
-                                                    continue
-                                                if file_path.suffix == '.py' and 'code' in file_path.parts:
-                                                    continue
-                                                
-                                                # Check if file was created/modified after query start
-                                                file_mtime = file_path.stat().st_mtime
-                                                if file_mtime >= query_start_time:
-                                                    rel_path = file_path.relative_to(scratch_dir)
-                                                    new_files.append({
-                                                        'path': str(rel_path),
-                                                        'size': file_path.stat().st_size
-                                                    })
-                                    
-                                    # Append new files to final answer if any were created
-                                    if new_files:
-                                        file_list = "\n\n---\n\n**Files created during this session:**\n\n"
-                                        for f in new_files:
-                                            size_kb = f['size'] / 1024
-                                            if size_kb < 1:
-                                                size_str = f"{f['size']} bytes"
-                                            else:
-                                                size_str = f"{size_kb:.1f} KB"
-                                            file_list += f"- `scratch/{f['path']}` ({size_str})\n"
-                                        final_answer += file_list
+                                    # Detect new files and append to answer
+                                    new_files = self._detect_new_files(query_start_time)
+                                    final_answer = self._append_files_list(final_answer, new_files)
                                     
                                     # Create HTML report and upload to catbox.moe
                                     html_report = self._create_html_report(user_input, final_answer, new_files)
@@ -1712,8 +1681,12 @@ You must complete all tasks before finishing. Use the skill_switch tool to switc
                     "content": verified_response
                 })
                 
+                # Detect new files and append to response
+                new_files = self._detect_new_files(query_start_time)
+                verified_response = self._append_files_list(verified_response, new_files)
+                
                 # Create HTML report and upload to catbox.moe
-                html_report = self._create_html_report(user_input, verified_response, [])
+                html_report = self._create_html_report(user_input, verified_response, new_files)
                 catbox_url = self._upload_to_catbox(html_report)
                 
                 if catbox_url:
@@ -1722,7 +1695,8 @@ You must complete all tasks before finishing. Use the skill_switch tool to switc
                     self._log_message({
                         "type": "final_response",
                         "content": verified_response,
-                        "report_url": catbox_url
+                        "report_url": catbox_url,
+                        "new_files": new_files if new_files else None
                     })
                 
                 return verified_response
@@ -1750,8 +1724,12 @@ You must complete all tasks before finishing. Use the skill_switch tool to switc
         # Verify links in the response if enabled
         verified_response, _ = self.skill_loader._auto_verify_links(final_response)
         
+        # Detect new files and append to response
+        new_files = self._detect_new_files(query_start_time)
+        verified_response = self._append_files_list(verified_response, new_files)
+        
         # Create HTML report and upload to catbox.moe
-        html_report = self._create_html_report(user_input, verified_response, [])
+        html_report = self._create_html_report(user_input, verified_response, new_files)
         catbox_url = self._upload_to_catbox(html_report)
         
         if catbox_url:
@@ -1761,18 +1739,80 @@ You must complete all tasks before finishing. Use the skill_switch tool to switc
         self._log_message({
             "type": "final_response",
             "content": verified_response,
-            "report_url": catbox_url if catbox_url else None
+            "report_url": catbox_url if catbox_url else None,
+            "new_files": new_files if new_files else None
         })
         
         return verified_response
     
+    def _detect_new_files(self, query_start_time: float) -> list:
+        """Detect files created in scratch/ after query start time"""
+        new_files = []
+        scratch_dir = get_scratch_dir()
+        if scratch_dir.exists():
+            for file_path in scratch_dir.rglob('*'):
+                if file_path.is_file():
+                    # Skip internal files
+                    if file_path.name in ['USER_QUERY.txt', 'CURRENT_TASK.txt']:
+                        continue
+                    if 'incomplete_tasks' in file_path.parts or 'completed_tasks' in file_path.parts:
+                        continue
+                    if file_path.suffix == '.py' and 'code' in file_path.parts:
+                        continue
+                    
+                    # Check if file was created/modified after query start
+                    file_mtime = file_path.stat().st_mtime
+                    if file_mtime >= query_start_time:
+                        rel_path = file_path.relative_to(scratch_dir)
+                        new_files.append({
+                            'path': str(rel_path),
+                            'size': file_path.stat().st_size
+                        })
+        return new_files
+    
+    def _append_files_list(self, response: str, new_files: list) -> str:
+        """No longer appends file list - files are handled separately (images displayed, others ignored)"""
+        # Don't append any file list text - images are displayed inline, other files ignored
+        return response
+    
     def _create_html_report(self, query: str, answer: str, new_files: list = None) -> str:
         """Create an HTML report of the conversation"""
         import markdown
+        import base64
         from datetime import datetime
         
         # Convert markdown to HTML
         answer_html = markdown.markdown(answer, extensions=['fenced_code', 'tables'])
+        
+        # Generate image embeds for any image files
+        images_html = ""
+        if new_files:
+            image_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp'}
+            scratch_dir = get_scratch_dir()
+            
+            for file_info in new_files:
+                file_path = scratch_dir / file_info['path']
+                if file_path.suffix.lower() in image_extensions and file_path.exists():
+                    try:
+                        # Read and encode image as base64
+                        with open(file_path, 'rb') as img_file:
+                            img_data = base64.b64encode(img_file.read()).decode('utf-8')
+                        
+                        # Determine MIME type
+                        mime_type = 'image/png' if file_path.suffix.lower() == '.png' else \
+                                   'image/jpeg' if file_path.suffix.lower() in ['.jpg', '.jpeg'] else \
+                                   'image/gif' if file_path.suffix.lower() == '.gif' else \
+                                   'image/svg+xml' if file_path.suffix.lower() == '.svg' else \
+                                   'image/webp'
+                        
+                        images_html += f'''
+    <div class="image-container">
+        <h3>{file_info['path']}</h3>
+        <img src="data:{mime_type};base64,{img_data}" alt="{file_info['path']}" />
+    </div>
+'''
+                    except Exception as e:
+                        console.print(f"[yellow]⚠[/yellow] Failed to embed image {file_info['path']}: {e}")
         
         html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1791,12 +1831,26 @@ You must complete all tasks before finishing. Use the skill_switch tool to switc
         }}
         h1 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }}
         h2 {{ color: #34495e; margin-top: 30px; }}
+        h3 {{ color: #7f8c8d; font-size: 0.9em; margin-bottom: 10px; }}
         .query {{ background: #ecf0f1; padding: 15px; border-left: 4px solid #3498db; margin: 20px 0; }}
         .answer {{ margin: 20px 0; }}
         code {{ background: #f4f4f4; padding: 2px 6px; border-radius: 3px; }}
         pre {{ background: #2c3e50; color: #ecf0f1; padding: 15px; border-radius: 5px; overflow-x: auto; }}
         .timestamp {{ color: #7f8c8d; font-size: 0.9em; }}
         .files {{ background: #e8f5e9; padding: 15px; border-radius: 5px; margin-top: 20px; }}
+        .image-container {{ 
+            margin: 20px 0; 
+            padding: 15px; 
+            background: #f8f9fa; 
+            border-radius: 8px;
+            text-align: center;
+        }}
+        .image-container img {{ 
+            max-width: 100%; 
+            height: auto; 
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }}
     </style>
 </head>
 <body>
@@ -1808,6 +1862,8 @@ You must complete all tasks before finishing. Use the skill_switch tool to switc
     
     <h2>Response</h2>
     <div class="answer">{answer_html}</div>
+    
+    {images_html if images_html else ""}
 </body>
 </html>"""
         return html

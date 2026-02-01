@@ -198,6 +198,16 @@ Output only the Python code, no explanations."""
                         summary.append(f" [{len(new_files)} file(s)]", style="green")
                     
                     live.update(summary)
+
+                    # Emit extra console detail on failures
+                    if result.returncode != 0:
+                        error_text = result.stderr.strip() if result.stderr else result.stdout.strip()
+                        if error_text:
+                            max_len = 600
+                            tail = error_text[-max_len:]
+                            if len(error_text) > max_len:
+                                tail = "…" + tail
+                            console.print(f"[red]generate_code error tail:[/red] {tail}")
                 
                 # Build result
                 result_data = {

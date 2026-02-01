@@ -1139,6 +1139,14 @@
                         : `${resultIcon} Tool result: ${resultStr}...`;
                     addLog(resultType, resultMsg, event.timestamp, elapsed);
                     registerToolEnd(event.data.tool_name, totalElapsed);
+
+                    if (event.data.tool_name === 'generate_code') {
+                        const debugInfo = extractGenerateCodeDebug(event.data.result);
+                        if (debugInfo) {
+                            const debugType = debugInfo.isError ? 'error' : 'tool';
+                            addLog(debugType, debugInfo.message, event.timestamp, elapsed);
+                        }
+                    }
                     
                     // Check if this is complete_task result with auto-activation message
                     if (event.data.tool_name === 'complete_task' && !event.data.error && event.data.result.message) {
@@ -1473,6 +1481,64 @@
                     </tbody>
                 </table>
             `;
+        }
+
+        function extractGenerateCodeDebug(resultPayload) {
+            if (!resultPayload) {
+                return null;
+            }
+
+            let parsed = null;
+            if (resultPayload.result && typeof resultPayload.result === 'string') {
+                try {
+                    parsed = JSON.parse(resultPayload.result).result || JSON.parse(resultPayload.result);
+                } catch (e) {
+                    return null;
+                }
+            } else if (resultPayload.result && typeof resultPayload.result === 'object') {
+                parsed = resultPayload.result;
+            } else if (typeof resultPayload === 'object' && resultPayload.output) {
+                parsed = resultPayload;
+            }
+
+            if (!parsed) {
+                return null;
+            }
+
+            const exitCode = parsed.exit_code;
+            const status = parsed.status;
+            const output = parsed.output || '';
+            const codeFile = parsed.code_file ? ` ${parsed.code_file}` : '';
+
+            const stderrMarker = '\n[STDERR]\n';
+            let stderr = '';
+            let stdout = '';
+            if (output.includes(stderrMarker)) {
+                const parts = output.split(stderrMarker);
+                stdout = parts[0].trim();
+                stderr = parts.slice(1).join(stderrMarker).trim();
+            } else {
+                stdout = output.trim();
+            }
+
+            const tail = (text, maxLen = 300) => {
+                if (!text) return '';
+                return text.length > maxLen ? `…${text.slice(-maxLen)}` : text;
+            };
+
+            const isError = status === 'error' || (typeof exitCode === 'number' && exitCode !== 0);
+            if (!isError) {
+                return null;
+            }
+
+            const stderrTail = tail(stderr) || tail(stdout);
+            const exitText = typeof exitCode === 'number' ? `exit ${exitCode}` : 'exit ?';
+            const details = stderrTail ? ` | ${stderrTail}` : '';
+
+            return {
+                isError: true,
+                message: `🧪 generate_code failed (${exitText})${codeFile}${details}`
+            };
         }
 
         function updateLLMTime(totalElapsed) {

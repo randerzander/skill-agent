@@ -298,18 +298,36 @@
         }
 
         .tool-stats {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-            max-height: 120px;
+            max-height: 140px;
             overflow-y: auto;
         }
 
-        .tool-stat {
-            display: flex;
-            justify-content: space-between;
-            gap: 12px;
+        .tool-stats table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        .tool-stats th,
+        .tool-stats td {
+            padding: 6px 8px;
+            border-bottom: 1px solid rgba(255, 140, 0, 0.1);
+            text-align: left;
             font-family: 'Courier New', monospace;
+        }
+
+        .tool-stats th {
+            color: #ffa500;
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+            background: linear-gradient(135deg, #1e2139 0%, #252a42 100%);
+            z-index: 1;
+        }
+
+        .tool-stats td:last-child,
+        .tool-stats th:last-child {
+            text-align: right;
         }
 
         .auto-scroll-toggle {
@@ -766,7 +784,22 @@
                         <div>
                             <span class="log-stats-key">Tools:</span>
                             <div class="tool-stats" id="statsToolTimes">
-                                <div class="tool-stat"><span>—</span><span>0.0s · 0</span></div>
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Tool Name</th>
+                                            <th>Total Time</th>
+                                            <th>Calls</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td>—</td>
+                                            <td>0.0s</td>
+                                            <td>0</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
@@ -1319,22 +1352,55 @@
                 return;
             }
             if (toolTotalTimes.size === 0) {
-                container.innerHTML = '<div class="tool-stat"><span>—</span><span>0.0s · 0</span></div>';
+                container.innerHTML = `
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Tool Name</th>
+                                <th>Total Time</th>
+                                <th>Calls</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>—</td>
+                                <td>0.0s</td>
+                                <td>0</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                `;
                 return;
             }
 
             const entries = Array.from(toolTotalTimes.entries())
                 .sort((a, b) => b[1] - a[1]);
 
-            container.innerHTML = entries.map(([tool, seconds]) => {
+            const rows = entries.map(([tool, seconds]) => {
                 const count = toolCallCounts.get(tool) || 0;
                 return `
-                <div class="tool-stat">
-                    <span>${escapeHtml(tool)}</span>
-                    <span>${seconds.toFixed(1)}s · ${count}</span>
-                </div>
-            `;
+                    <tr>
+                        <td>${escapeHtml(tool)}</td>
+                        <td>${seconds.toFixed(1)}s</td>
+                        <td>${count}</td>
+                    </tr>
+                `;
             }).join('');
+
+            container.innerHTML = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Tool Name</th>
+                            <th>Total Time</th>
+                            <th>Calls</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows}
+                    </tbody>
+                </table>
+            `;
         }
 
         function updateLLMTime(totalElapsed) {

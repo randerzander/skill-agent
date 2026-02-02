@@ -542,6 +542,28 @@ def reconnect_session():
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
 
+@app.route('/api/session_status', methods=['POST'])
+def get_session_status():
+    """Check if a session exists and get its status"""
+    session_id = request.json.get('session_id', None)
+    
+    if not session_id:
+        return jsonify({'error': 'No session_id provided'}), 400
+    
+    with sessions_lock:
+        if session_id not in sessions:
+            return jsonify({'exists': False}), 200
+        
+        session_state = sessions[session_id]
+        return jsonify({
+            'exists': True,
+            'running': session_state['running'],
+            'completed': session_state['completed'],
+            'event_count': len(session_state['logs']),
+            'elapsed_time': session_state['elapsed_time']
+        })
+
+
 @app.route('/api/chat_history')
 def get_chat_history():
     """Get the full chat history with reasoning traces injected"""

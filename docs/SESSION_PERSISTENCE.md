@@ -2,11 +2,11 @@
 
 ## Overview
 
-This document describes the session persistence feature that allows the Agent Skills Framework web UI to maintain state when users switch tabs on mobile browsers.
+This document describes the session persistence feature that allows the Agent Skills Framework web UI to maintain state when users switch tabs on mobile browsers **or close and reopen the tab**.
 
 ## Problem Statement
 
-When users switch to another tab on their mobile browser and then return to the skill-agent tab, the Server-Sent Events (SSE) connection is lost, and events don't resume being pushed from the server to the client.
+When users switch to another tab on their mobile browser and then return to the skill-agent tab, the Server-Sent Events (SSE) connection is lost, and events don't resume being pushed from the server to the client. Additionally, if users close the tab entirely and open a new one, they cannot reconnect to ongoing agent executions.
 
 ## Solution
 
@@ -14,6 +14,7 @@ Implemented session persistence using:
 - **localStorage** for client-side session ID storage
 - **Session management** on the server to track state per session
 - **Automatic reconnection** when page visibility is restored
+- **Auto-reconnect on page load** to resume ongoing executions
 - **Event tracking** to deliver only missed events
 
 ## Architecture
@@ -32,7 +33,7 @@ Implemented session persistence using:
 2. **localStorage Persistence**
    - Key: `agent_session_id`
    - Generated once and reused across page reloads
-   - Survives tab switches and browser restarts
+   - Survives tab switches, tab closures, and browser restarts
 
 3. **Visibility Change Detection**
    ```javascript
@@ -43,7 +44,25 @@ Implemented session persistence using:
    });
    ```
 
-4. **Event Tracking**
+4. **Auto-Reconnect on Page Load**
+   ```javascript
+   window.addEventListener('DOMContentLoaded', () => {
+       sessionId = getOrCreateSessionId();
+       checkAndReconnectSession(); // NEW: Check for active sessions
+   });
+   
+   function checkAndReconnectSession() {
+       fetch('/api/session_status', {
+           body: JSON.stringify({ session_id: sessionId })
+       }).then(data => {
+           if (data.exists && (data.running || data.completed)) {
+               reconnectToSession(); // Auto-reconnect to ongoing execution
+           }
+       });
+   }
+   ```
+
+5. **Event Tracking**
    - `eventCount` tracks number of events received
    - Used to request only missed events during reconnection
 
@@ -122,6 +141,38 @@ Start agent execution with session persistence.
 - `400`: Missing session_id or input
 - `500`: Agent initialization failed
 
+### POST /api/session_status
+
+Check if a session exists and get its current status.
+
+**Request:**
+```json
+{
+  "session_id": "abc123..."
+}
+```
+
+**Response:**
+```json
+{
+  "exists": true,
+  "running": true,
+  "completed": false,
+  "event_count": 42,
+  "elapsed_time": 15.3
+}
+```
+
+Or if session doesn't exist:
+```json
+{
+  "exists": false
+}
+```
+
+**Error Codes:**
+- `400`: Missing session_id
+
 ### POST /api/reconnect
 
 Reconnect to existing session and receive missed events.
@@ -162,7 +213,7 @@ time.sleep(600)  # Run every 10 minutes
 
 ## Testing
 
-### Manual Testing
+### Manual Testing - Tab Switching
 
 1. Open the skill-agent web UI
 2. Open browser console
@@ -173,11 +224,24 @@ time.sleep(600)  # Run every 10 minutes
 7. Switch back
 8. Verify events continue streaming
 
+### Manual Testing - Tab Close/Reopen
+
+1. Open the skill-agent web UI
+2. Start a long-running query (one that takes time to complete)
+3. Close the tab completely
+4. Open a new tab and navigate to the skill-agent URL
+5. **Expected behavior**: 
+   - Console shows "Checking session status..."
+   - Console shows "Found active session, reconnecting..."
+   - UI displays "🔄 Reconnecting to active session..."
+   - All events from the ongoing execution are displayed
+   - Input remains disabled until execution completes
+
 ### Automated Testing
 
 ```bash
 # Test API endpoints
-python tests/test_session_persistence.py
+python /tmp/test_auto_reconnect.py
 
 # Or run the comprehensive test
 python /tmp/test_session_complete.py

@@ -986,6 +986,11 @@
                         if (done) {
                             console.log('Reconnect stream ended');
                             isReconnecting = false;
+                            // Re-enable input if session is complete
+                            const submitBtn = document.getElementById('submitBtn');
+                            const userInput = document.getElementById('userInput');
+                            if (submitBtn) submitBtn.disabled = false;
+                            if (userInput) userInput.disabled = false;
                             return;
                         }
                         
@@ -1007,6 +1012,11 @@
                     }).catch(err => {
                         console.error('Error reading reconnect stream:', err);
                         isReconnecting = false;
+                        // Re-enable input on error
+                        const submitBtn = document.getElementById('submitBtn');
+                        const userInput = document.getElementById('userInput');
+                        if (submitBtn) submitBtn.disabled = false;
+                        if (userInput) userInput.disabled = false;
                     });
                 }
                 
@@ -1014,6 +1024,11 @@
             }).catch(err => {
                 console.error('Error reconnecting to session:', err);
                 isReconnecting = false;
+                // Re-enable input on error
+                const submitBtn = document.getElementById('submitBtn');
+                const userInput = document.getElementById('userInput');
+                if (submitBtn) submitBtn.disabled = false;
+                if (userInput) userInput.disabled = false;
             });
         }
         
@@ -1023,7 +1038,52 @@
             initLogAutoScroll();
             sessionId = getOrCreateSessionId();
             console.log('Session ID:', sessionId);
+            
+            // Check if there's an active session and reconnect if needed
+            checkAndReconnectSession();
         });
+        
+        function checkAndReconnectSession() {
+            if (!sessionId) {
+                return;
+            }
+            
+            console.log('Checking session status...');
+            fetch('/api/session_status', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ session_id: sessionId })
+            }).then(response => response.json())
+            .then(data => {
+                console.log('Session status:', data);
+                if (data.exists && (data.running || data.completed)) {
+                    console.log('Found active session, reconnecting...');
+                    // Session exists and has activity, reconnect to it
+                    eventCount = 0; // Start from beginning since we don't know what we missed
+                    startTime = Date.now() - (data.elapsed_time * 1000); // Adjust start time
+                    
+                    // Disable input while reconnecting
+                    const submitBtn = document.getElementById('submitBtn');
+                    const userInput = document.getElementById('userInput');
+                    if (submitBtn) submitBtn.disabled = true;
+                    if (userInput) userInput.disabled = true;
+                    
+                    // Show reconnecting message
+                    const logsDiv = document.getElementById('logs');
+                    if (logsDiv) {
+                        logsDiv.innerHTML = '';
+                    }
+                    addLog('info', '🔄 Reconnecting to active session...', new Date().toISOString(), 0);
+                    
+                    // Reconnect and get all events
+                    reconnectToSession();
+                }
+            }).catch(err => {
+                console.error('Error checking session status:', err);
+            });
+        }
         
         function loadSkills() {
             fetch('/api/status')

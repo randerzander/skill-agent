@@ -651,14 +651,21 @@ class AgentSkillsFramework:
         
         if not self.api_key:
             raise ValueError(f"API key not found. Set {api_key_env} environment variable.")
-        
-        self.client = OpenAI(
-            base_url=openai_config.get('base_url', 'https://openrouter.ai/api/v1'),
-            api_key=self.api_key
-        )
-        
+
         # Model configuration from config
         self.model = openai_config.get('model', 'nvidia/nemotron-3-nano-30b-a3b:free')
+        self.base_url = openai_config.get('base_url', 'https://openrouter.ai/api/v1')
+        
+        self.client = OpenAI(
+            base_url=self.base_url,
+            api_key=self.api_key
+        )
+
+        # Query server for actual model(s) and store metadata for logging
+        self.client_metadata = self._fetch_server_model_metadata()
+        server_model = self.client_metadata.get("server_model")
+        if server_model:
+            self.model = server_model
         
         # Initialize skill loader with enabled skills filter
         skills_config = config.get('skills', {})
@@ -668,6 +675,11 @@ class AgentSkillsFramework:
         # Setup conversation log file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.log_file = LOGS_DIR / f"conversation_{timestamp}.jsonl"
+        if self.client_metadata:
+            self._log_message({
+                "type": "client_metadata",
+                "client_metadata": self.client_metadata
+            })
         
         # Conversation history - start with simple system message
         # Get system message from config or use default
@@ -792,6 +804,32 @@ Activate available skills to complete tasks. After each skill, consider whether 
     def _estimate_tokens(self, text: str) -> int:
         """Estimate token count from text length"""
         return int(len(text) / 4.5)
+
+    def _fetch_server_model_metadata(self) -> Dict[str, Any]:
+        """Query the OpenAI-compatible server for model metadata."""
+        metadata: Dict[str, Any] = {
+            "configured_model": self.model,
+            "base_url": self.base_url,
+        }
+        try:
+            models = self.client.models.list()
+            model_ids: list[str] = []
+            for model in getattr(models, "data", []) or []:
+                if isinstance(model, dict):
+                    model_id = model.get("id")
+                else:
+                    model_id = getattr(model, "id", None)
+                if model_id:
+                    model_ids.append(model_id)
+            if model_ids:
+                metadata["server_models"] = model_ids
+                if len(model_ids) == 1:
+                    metadata["server_model"] = model_ids[0]
+        except Exception as e:
+            metadata["server_model_error"] = str(e)
+        return metadata
+
+    
     
     def _log_message(self, entry: Dict[str, Any]):
         """Log a message to the conversation log file and call event callback"""
@@ -800,6 +838,8 @@ Activate available skills to complete tasks. After each skill, consider whether 
                 "timestamp": datetime.now().isoformat(),
                 **entry
             }
+            if getattr(self, "client_metadata", None) and "client_metadata" not in log_entry:
+                log_entry["client_metadata"] = self.client_metadata
             
             # Write to log file
             with open(self.log_file, 'a') as f:
@@ -933,7 +973,7 @@ Activate available skills to complete tasks. After each skill, consider whether 
         console.print(f"[green]✓[/green] Skill auto-activated: [bold]planning[/bold] [dim](~{token_estimate} tokens added)[/dim]")
 
         # Inject skill content and current task info into messages
-        self.messages.append({"role": "assistant", "content": skill_message})
+        self.messages.append({"role": "system", "content": skill_message})
         
         iteration = 0
         rate_limit_retries = 0

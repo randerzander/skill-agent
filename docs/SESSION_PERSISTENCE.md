@@ -224,6 +224,18 @@ time.sleep(600)  # Run every 10 minutes
 7. Switch back
 8. Verify events continue streaming
 
+### Manual Testing - Page Refresh
+
+1. Open the skill-agent web UI
+2. Start a long-running query (one that takes time to complete)
+3. **Refresh the page** (F5 or Ctrl+R)
+4. **Expected behavior**: 
+   - Console shows "Checking session status..."
+   - Console shows "Found active session, reconnecting..."
+   - UI displays "🔄 Reconnecting to active session..."
+   - All events from the ongoing execution are displayed
+   - Input remains disabled until execution completes
+
 ### Manual Testing - Tab Close/Reopen
 
 1. Open the skill-agent web UI

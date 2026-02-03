@@ -1058,7 +1058,8 @@
             }).then(response => response.json())
             .then(data => {
                 console.log('Session status:', data);
-                if (data.exists && (data.running || data.completed)) {
+                // Reconnect if session exists and has any activity (running, completed, or has events)
+                if (data.exists && (data.running || data.completed || data.event_count > 0)) {
                     console.log('Found active session, reconnecting...');
                     // Session exists and has activity, reconnect to it
                     eventCount = 0; // Start from beginning since we don't know what we missed

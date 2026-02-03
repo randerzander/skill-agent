@@ -97,11 +97,12 @@ def init_agent():
 class WebAgentWrapper:
     """Wrapper around AgentSkillsFramework to capture execution events"""
     
-    def __init__(self, agent_framework, event_queue=None):
+    def __init__(self, agent_framework, event_queue=None, persist_event=None):
         self.agent = agent_framework
         self.events = []
         self.start_time = None
         self.event_queue = event_queue  # Queue for real-time streaming
+        self.persist_event = persist_event
         
     def event_callback(self, event_type_or_entry, data=None):
         """Callback for real-time events from the agent"""
@@ -291,6 +292,8 @@ class WebAgentWrapper:
         }
         
         self.events.append(event)
+        if self.persist_event:
+            self.persist_event(event)
         
         # If we have a queue, push event for real-time streaming
         if self.event_queue is not None:
@@ -395,11 +398,73 @@ def run_agent():
         agent_state['logs'] = []
         agent_state['chat_history'] = []
         agent_state['tools_called'] = []
+
+    def update_state_from_event(event):
+        """Persist event to session state and global agent state"""
+        with sessions_lock:
+            session_state['elapsed_time'] = event['elapsed']
+            session_state['logs'].append(event)
+
+            if event['type'] == 'user_message':
+                session_state['chat_history'].append({
+                    'role': 'user',
+                    'content': event['data']['content'],
+                    'timestamp': event['timestamp']
+                })
+            elif event['type'] == 'llm_response':
+                session_state['chat_history'].append({
+                    'role': 'assistant',
+                    'content': event['data']['content'],
+                    'thinking': event['data'].get('thinking'),
+                    'tool_calls': event['data'].get('tool_calls', []),
+                    'timestamp': event['timestamp']
+                })
+            elif event['type'] == 'tool_call':
+                session_state['tools_called'].append(event['data'])
+            elif event['type'] == 'tool_result':
+                session_state['chat_history'].append({
+                    'role': 'tool',
+                    'content': json.dumps(event['data']['result']),
+                    'tool_name': event['data']['tool_name'],
+                    'timestamp': event['timestamp']
+                })
+
+        with state_lock:
+            agent_state['elapsed_time'] = event['elapsed']
+            agent_state['logs'].append(event)
+
+            if event['type'] == 'user_message':
+                agent_state['chat_history'].append({
+                    'role': 'user',
+                    'content': event['data']['content'],
+                    'timestamp': event['timestamp']
+                })
+            elif event['type'] == 'llm_response':
+                agent_state['chat_history'].append({
+                    'role': 'assistant',
+                    'content': event['data']['content'],
+                    'thinking': event['data'].get('thinking'),
+                    'tool_calls': event['data'].get('tool_calls', []),
+                    'timestamp': event['timestamp']
+                })
+            elif event['type'] == 'tool_call':
+                agent_state['tools_called'].append(event['data'])
+            elif event['type'] == 'tool_result':
+                agent_state['chat_history'].append({
+                    'role': 'tool',
+                    'content': json.dumps(event['data']['result']),
+                    'tool_name': event['data']['tool_name'],
+                    'timestamp': event['timestamp']
+                })
     
     def generate():
         """Generate SSE events for the agent execution"""
         event_queue = queue.Queue()
-        wrapper = WebAgentWrapper(agent, event_queue=event_queue)
+        wrapper = WebAgentWrapper(
+            agent,
+            event_queue=event_queue,
+            persist_event=update_state_from_event
+        )
         
         # Run agent in background thread
         agent_done = threading.Event()
@@ -413,6 +478,16 @@ def run_agent():
             except Exception as e:
                 agent_error = e
             finally:
+                with sessions_lock:
+                    session_state['running'] = False
+                    session_state['completed'] = True
+                    print(
+                        f"[{client_ip}] Session run ended (session: {session_id}, pid: {pid}, "
+                        f"completed: {session_state.get('completed')}, "
+                        f"log_count: {len(session_state.get('logs', []))})"
+                    )
+                with state_lock:
+                    agent_state['running'] = False
                 agent_done.set()
         
         agent_thread = threading.Thread(target=run_agent_thread)
@@ -424,66 +499,6 @@ def run_agent():
                 try:
                     # Wait for event with timeout so we can check if agent is done
                     event = event_queue.get(timeout=0.1)
-                    
-                    # Store event in session state
-                    with sessions_lock:
-                        session_state['elapsed_time'] = event['elapsed']
-                        session_state['logs'].append(event)
-                        
-                        # Update chat history
-                        if event['type'] == 'user_message':
-                            session_state['chat_history'].append({
-                                'role': 'user',
-                                'content': event['data']['content'],
-                                'timestamp': event['timestamp']
-                            })
-                        elif event['type'] == 'llm_response':
-                            session_state['chat_history'].append({
-                                'role': 'assistant',
-                                'content': event['data']['content'],
-                                'thinking': event['data'].get('thinking'),
-                                'tool_calls': event['data'].get('tool_calls', []),
-                                'timestamp': event['timestamp']
-                            })
-                        elif event['type'] == 'tool_call':
-                            session_state['tools_called'].append(event['data'])
-                        elif event['type'] == 'tool_result':
-                            session_state['chat_history'].append({
-                                'role': 'tool',
-                                'content': json.dumps(event['data']['result']),
-                                'tool_name': event['data']['tool_name'],
-                                'timestamp': event['timestamp']
-                            })
-                    
-                    # Also update global state for backward compatibility
-                    with state_lock:
-                        agent_state['elapsed_time'] = event['elapsed']
-                        agent_state['logs'].append(event)
-                        
-                        # Update chat history
-                        if event['type'] == 'user_message':
-                            agent_state['chat_history'].append({
-                                'role': 'user',
-                                'content': event['data']['content'],
-                                'timestamp': event['timestamp']
-                            })
-                        elif event['type'] == 'llm_response':
-                            agent_state['chat_history'].append({
-                                'role': 'assistant',
-                                'content': event['data']['content'],
-                                'thinking': event['data'].get('thinking'),
-                                'tool_calls': event['data'].get('tool_calls', []),
-                                'timestamp': event['timestamp']
-                            })
-                        elif event['type'] == 'tool_call':
-                            agent_state['tools_called'].append(event['data'])
-                        elif event['type'] == 'tool_result':
-                            agent_state['chat_history'].append({
-                                'role': 'tool',
-                                'content': json.dumps(event['data']['result']),
-                                'tool_name': event['data']['tool_name'],
-                                'timestamp': event['timestamp']
-                            })
                     
                     yield f"data: {json.dumps(event)}\n\n"
                     
@@ -501,22 +516,8 @@ def run_agent():
                 # Send completion event
                 yield f"data: {json.dumps({'type': 'complete', 'response': agent_response})}\n\n"
             
-            # Mark session as completed
-            with sessions_lock:
-                session_state['completed'] = True
-            
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-        finally:
-            with sessions_lock:
-                session_state['running'] = False
-                print(
-                    f"[{client_ip}] Session run ended (session: {session_id}, pid: {pid}, "
-                    f"completed: {session_state.get('completed')}, "
-                    f"log_count: {len(session_state.get('logs', []))})"
-                )
-            with state_lock:
-                agent_state['running'] = False
     
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 

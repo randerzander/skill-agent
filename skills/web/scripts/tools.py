@@ -330,6 +330,8 @@ def read_url(url: str) -> str:
     except Exception as e:
         return json.dumps({"error": f"Invalid URL format: {str(e)}"})
     
+    print(f"[read_url] Fetching URL: {url}")
+
     # Handle special URL types
     if _is_youtube_url(url):
         result = _get_youtube_transcript(url)
@@ -432,9 +434,29 @@ def read_url(url: str) -> str:
         h.ignore_images = True
         markdown_content = h.handle(html_content)
         
-        # Save to scratch
+        # Save full content to scratch
         _save_to_scratch(url, title, markdown_content)
-        
+
+        MAX_CONTENT_CHARS = 60000  # ~60KB of markdown content
+        if len(markdown_content) > MAX_CONTENT_CHARS:
+            truncated = markdown_content[:MAX_CONTENT_CHARS]
+            note = (
+                f"Content truncated to {MAX_CONTENT_CHARS:,} characters "
+                f"(original size: {len(markdown_content):,} chars). "
+                "Full content saved to scratch/ directory. Use the 'coding' skill to analyze it."
+            )
+            return json.dumps({
+                "result": {
+                    "url": url,
+                    "title": title,
+                    "content": truncated,
+                    "source_type": "webpage",
+                    "truncated": True,
+                    "original_size": len(markdown_content),
+                    "note": note
+                }
+            })
+
         return json.dumps({
             "result": {
                 "url": url,
@@ -445,4 +467,4 @@ def read_url(url: str) -> str:
         })
         
     except Exception as e:
-        return json.dumps({"error": f"Failed to fetch URL: {str(e)}"})
+        return json.dumps({"error": f"Failed to fetch URL ({url}): {str(e)}"})

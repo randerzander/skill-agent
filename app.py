@@ -36,6 +36,39 @@ agent_state = {
 }
 state_lock = threading.Lock()
 
+# Session management - store state per session ID
+sessions = {}  # session_id -> session_state
+sessions_lock = threading.Lock()
+
+# Session cleanup - remove sessions older than 1 hour
+SESSION_TIMEOUT = 3600  # 1 hour in seconds
+
+def cleanup_old_sessions():
+    """Remove sessions that haven't been active for SESSION_TIMEOUT seconds"""
+    with sessions_lock:
+        current_time = time.time()
+        expired_sessions = []
+        for session_id, session_state in sessions.items():
+            if session_state.get('start_time'):
+                age = current_time - session_state['start_time']
+                if age > SESSION_TIMEOUT:
+                    expired_sessions.append(session_id)
+        
+        for session_id in expired_sessions:
+            del sessions[session_id]
+            print(f"Cleaned up expired session: {session_id}")
+        
+        if expired_sessions:
+            print(f"Removed {len(expired_sessions)} expired session(s)")
+
+# Run cleanup periodically in background
+def session_cleanup_thread():
+    while True:
+        time.sleep(600)  # Run every 10 minutes
+        cleanup_old_sessions()
+
+threading.Thread(target=session_cleanup_thread, daemon=True).start()
+
 
 def get_client_ip():
     """Get the real client IP address from X-Forwarded-For header or remote_addr"""
@@ -64,11 +97,12 @@ def init_agent():
 class WebAgentWrapper:
     """Wrapper around AgentSkillsFramework to capture execution events"""
     
-    def __init__(self, agent_framework, event_queue=None):
+    def __init__(self, agent_framework, event_queue=None, persist_event=None):
         self.agent = agent_framework
         self.events = []
         self.start_time = None
         self.event_queue = event_queue  # Queue for real-time streaming
+        self.persist_event = persist_event
         
     def event_callback(self, event_type_or_entry, data=None):
         """Callback for real-time events from the agent"""
@@ -258,6 +292,8 @@ class WebAgentWrapper:
         }
         
         self.events.append(event)
+        if self.persist_event:
+            self.persist_event(event)
         
         # If we have a queue, push event for real-time streaming
         if self.event_queue is not None:
@@ -317,22 +353,118 @@ def run_agent():
     if not user_input:
         return jsonify({'error': 'No input provided'}), 400
     
-    client_ip = get_client_ip()
-    print(f"[{client_ip}] User query: {user_input}")
+    # Get or create session ID
+    session_id = request.json.get('session_id', None)
+    if not session_id:
+        # Return error if no session ID provided - client should always provide one
+        return jsonify({'error': 'No session_id provided. Client must generate and provide a session ID.'}), 400
     
+    client_ip = get_client_ip()
+    pid = os.getpid()
+    print(f"[{client_ip}] User query: {user_input} (session: {session_id}, pid: {pid})")
+    
+    # Initialize session state
+    with sessions_lock:
+        if session_id not in sessions:
+            sessions[session_id] = {
+                'running': False,
+                'logs': [],
+                'chat_history': [],
+                'tools_called': [],
+                'start_time': None,
+                'elapsed_time': 0,
+                'completed': False
+            }
+        session_state = sessions[session_id]
+        
+        if session_state['running']:
+            print(f"[{client_ip}] Reject run: session already running (session: {session_id}, pid: {pid})")
+            return jsonify({'error': 'Agent is already running for this session'}), 400
+        session_state['running'] = True
+        session_state['start_time'] = time.time()
+        session_state['logs'] = []
+        session_state['chat_history'] = []
+        session_state['tools_called'] = []
+        session_state['completed'] = False
+        print(
+            f"[{client_ip}] Session started (session: {session_id}, pid: {pid}, "
+            f"start_time: {session_state['start_time']})"
+        )
+    
+    # Also update global state for backward compatibility
     with state_lock:
-        if agent_state['running']:
-            return jsonify({'error': 'Agent is already running'}), 400
         agent_state['running'] = True
-        agent_state['start_time'] = time.time()
+        agent_state['start_time'] = session_state['start_time']
         agent_state['logs'] = []
         agent_state['chat_history'] = []
         agent_state['tools_called'] = []
+
+    def update_state_from_event(event):
+        """Persist event to session state and global agent state"""
+        with sessions_lock:
+            session_state['elapsed_time'] = event['elapsed']
+            session_state['logs'].append(event)
+
+            if event['type'] == 'user_message':
+                session_state['chat_history'].append({
+                    'role': 'user',
+                    'content': event['data']['content'],
+                    'timestamp': event['timestamp']
+                })
+            elif event['type'] == 'llm_response':
+                session_state['chat_history'].append({
+                    'role': 'assistant',
+                    'content': event['data']['content'],
+                    'thinking': event['data'].get('thinking'),
+                    'tool_calls': event['data'].get('tool_calls', []),
+                    'timestamp': event['timestamp']
+                })
+            elif event['type'] == 'tool_call':
+                session_state['tools_called'].append(event['data'])
+            elif event['type'] == 'tool_result':
+                session_state['chat_history'].append({
+                    'role': 'tool',
+                    'content': json.dumps(event['data']['result']),
+                    'tool_name': event['data']['tool_name'],
+                    'timestamp': event['timestamp']
+                })
+
+        with state_lock:
+            agent_state['elapsed_time'] = event['elapsed']
+            agent_state['logs'].append(event)
+
+            if event['type'] == 'user_message':
+                agent_state['chat_history'].append({
+                    'role': 'user',
+                    'content': event['data']['content'],
+                    'timestamp': event['timestamp']
+                })
+            elif event['type'] == 'llm_response':
+                agent_state['chat_history'].append({
+                    'role': 'assistant',
+                    'content': event['data']['content'],
+                    'thinking': event['data'].get('thinking'),
+                    'tool_calls': event['data'].get('tool_calls', []),
+                    'timestamp': event['timestamp']
+                })
+            elif event['type'] == 'tool_call':
+                agent_state['tools_called'].append(event['data'])
+            elif event['type'] == 'tool_result':
+                agent_state['chat_history'].append({
+                    'role': 'tool',
+                    'content': json.dumps(event['data']['result']),
+                    'tool_name': event['data']['tool_name'],
+                    'timestamp': event['timestamp']
+                })
     
     def generate():
         """Generate SSE events for the agent execution"""
         event_queue = queue.Queue()
-        wrapper = WebAgentWrapper(agent, event_queue=event_queue)
+        wrapper = WebAgentWrapper(
+            agent,
+            event_queue=event_queue,
+            persist_event=update_state_from_event
+        )
         
         # Run agent in background thread
         agent_done = threading.Event()
@@ -346,6 +478,16 @@ def run_agent():
             except Exception as e:
                 agent_error = e
             finally:
+                with sessions_lock:
+                    session_state['running'] = False
+                    session_state['completed'] = True
+                    print(
+                        f"[{client_ip}] Session run ended (session: {session_id}, pid: {pid}, "
+                        f"completed: {session_state.get('completed')}, "
+                        f"log_count: {len(session_state.get('logs', []))})"
+                    )
+                with state_lock:
+                    agent_state['running'] = False
                 agent_done.set()
         
         agent_thread = threading.Thread(target=run_agent_thread)
@@ -357,35 +499,6 @@ def run_agent():
                 try:
                     # Wait for event with timeout so we can check if agent is done
                     event = event_queue.get(timeout=0.1)
-                    
-                    with state_lock:
-                        agent_state['elapsed_time'] = event['elapsed']
-                        agent_state['logs'].append(event)
-                        
-                        # Update chat history
-                        if event['type'] == 'user_message':
-                            agent_state['chat_history'].append({
-                                'role': 'user',
-                                'content': event['data']['content'],
-                                'timestamp': event['timestamp']
-                            })
-                        elif event['type'] == 'llm_response':
-                            agent_state['chat_history'].append({
-                                'role': 'assistant',
-                                'content': event['data']['content'],
-                                'thinking': event['data'].get('thinking'),
-                                'tool_calls': event['data'].get('tool_calls', []),
-                                'timestamp': event['timestamp']
-                            })
-                        elif event['type'] == 'tool_call':
-                            agent_state['tools_called'].append(event['data'])
-                        elif event['type'] == 'tool_result':
-                            agent_state['chat_history'].append({
-                                'role': 'tool',
-                                'content': json.dumps(event['data']['result']),
-                                'tool_name': event['data']['tool_name'],
-                                'timestamp': event['timestamp']
-                            })
                     
                     yield f"data: {json.dumps(event)}\n\n"
                     
@@ -405,11 +518,107 @@ def run_agent():
             
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-        finally:
-            with state_lock:
-                agent_state['running'] = False
     
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
+
+@app.route('/api/reconnect', methods=['POST'])
+def reconnect_session():
+    """Reconnect to an existing session and get missed events"""
+    session_id = request.json.get('session_id', None)
+    last_event_index = request.json.get('last_event_index', -1)
+    
+    if not session_id:
+        return jsonify({'error': 'No session_id provided'}), 400
+    
+    with sessions_lock:
+        if session_id not in sessions:
+            return jsonify({'error': 'Session not found'}), 404
+        
+        session_state = sessions[session_id]
+        log_count = len(session_state.get('logs', []))
+        is_running = session_state.get('running')
+        is_completed = session_state.get('completed')
+        
+        # Copy missed events outside the lock to avoid blocking
+        missed_events = session_state['logs'][last_event_index + 1:]
+
+    client_ip = get_client_ip()
+    pid = os.getpid()
+    print(
+        f"[{client_ip}] Reconnect requested (session: {session_id}, "
+        f"last_event_index: {last_event_index}, "
+        f"running: {is_running}, completed: {is_completed}, log_count: {log_count}, pid: {pid})"
+    )
+        
+    def generate():
+        """Generate SSE events for reconnection and keep streaming if still running"""
+        current_index = last_event_index
+
+        # Send any missed events first
+        for event in missed_events:
+            current_index += 1
+            yield f"data: {json.dumps(event)}\n\n"
+
+        while True:
+            with sessions_lock:
+                current_state = sessions.get(session_id)
+                if current_state is None:
+                    break
+                logs = list(current_state.get('logs', []))
+                still_running = current_state.get('running')
+                now_completed = current_state.get('completed')
+
+            # Send any new events since the last index
+            while current_index + 1 < len(logs):
+                current_index += 1
+                yield f"data: {json.dumps(logs[current_index])}\n\n"
+
+            # If session is completed and no more events, send completion event and stop
+            if now_completed and current_index + 1 >= len(logs):
+                yield f"data: {json.dumps({'type': 'complete', 'response': 'Session resumed'})}\n\n"
+                break
+
+            # If not running and not completed, stop streaming
+            if not still_running and not now_completed:
+                break
+
+            time.sleep(0.2)
+    
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
+
+@app.route('/api/session_status', methods=['POST'])
+def get_session_status():
+    """Check if a session exists and get its status"""
+    session_id = request.json.get('session_id', None)
+    
+    if not session_id:
+        return jsonify({'error': 'No session_id provided'}), 400
+    
+    client_ip = get_client_ip()
+    pid = os.getpid()
+
+    with sessions_lock:
+        if session_id not in sessions:
+            print(f"[{client_ip}] Session status: not found (session: {session_id}, pid: {pid})")
+            return jsonify({'exists': False}), 200
+        
+        session_state = sessions[session_id]
+        print(
+            f"[{client_ip}] Session status (session: {session_id}, pid: {pid}, "
+            f"running: {session_state.get('running')}, completed: {session_state.get('completed')}, "
+            f"log_count: {len(session_state.get('logs', []))}, "
+            f"start_time: {session_state.get('start_time')}, "
+            f"elapsed_time: {session_state.get('elapsed_time')})"
+        )
+        return jsonify({
+            'exists': True,
+            'running': session_state['running'],
+            'completed': session_state['completed'],
+            'event_count': len(session_state['logs']),
+            'elapsed_time': session_state['elapsed_time']
+        })
 
 
 @app.route('/api/chat_history')

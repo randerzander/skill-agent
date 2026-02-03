@@ -524,20 +524,53 @@ def reconnect_session():
             return jsonify({'error': 'Session not found'}), 404
         
         session_state = sessions[session_id]
+        log_count = len(session_state.get('logs', []))
+        is_running = session_state.get('running')
+        is_completed = session_state.get('completed')
         
         # Copy missed events outside the lock to avoid blocking
         missed_events = session_state['logs'][last_event_index + 1:]
-        is_completed = session_state['completed']
+
+    client_ip = get_client_ip()
+    print(
+        f"[{client_ip}] Reconnect requested (session: {session_id}, "
+        f"last_event_index: {last_event_index}, "
+        f"running: {is_running}, completed: {is_completed}, log_count: {log_count})"
+    )
         
     def generate():
-        """Generate SSE events for reconnection"""
-        # Send all missed events
+        """Generate SSE events for reconnection and keep streaming if still running"""
+        current_index = last_event_index
+
+        # Send any missed events first
         for event in missed_events:
+            current_index += 1
             yield f"data: {json.dumps(event)}\n\n"
-        
-        # If session is completed, send completion event
-        if is_completed:
-            yield f"data: {json.dumps({'type': 'complete', 'response': 'Session resumed'})}\n\n"
+
+        while True:
+            with sessions_lock:
+                current_state = sessions.get(session_id)
+                if current_state is None:
+                    break
+                logs = list(current_state.get('logs', []))
+                still_running = current_state.get('running')
+                now_completed = current_state.get('completed')
+
+            # Send any new events since the last index
+            while current_index + 1 < len(logs):
+                current_index += 1
+                yield f"data: {json.dumps(logs[current_index])}\n\n"
+
+            # If session is completed and no more events, send completion event and stop
+            if now_completed and current_index + 1 >= len(logs):
+                yield f"data: {json.dumps({'type': 'complete', 'response': 'Session resumed'})}\n\n"
+                break
+
+            # If not running and not completed, stop streaming
+            if not still_running and not now_completed:
+                break
+
+            time.sleep(0.2)
     
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 

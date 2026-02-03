@@ -357,7 +357,8 @@ def run_agent():
         return jsonify({'error': 'No session_id provided. Client must generate and provide a session ID.'}), 400
     
     client_ip = get_client_ip()
-    print(f"[{client_ip}] User query: {user_input} (session: {session_id})")
+    pid = os.getpid()
+    print(f"[{client_ip}] User query: {user_input} (session: {session_id}, pid: {pid})")
     
     # Initialize session state
     with sessions_lock:
@@ -374,6 +375,7 @@ def run_agent():
         session_state = sessions[session_id]
         
         if session_state['running']:
+            print(f"[{client_ip}] Reject run: session already running (session: {session_id}, pid: {pid})")
             return jsonify({'error': 'Agent is already running for this session'}), 400
         session_state['running'] = True
         session_state['start_time'] = time.time()
@@ -381,6 +383,10 @@ def run_agent():
         session_state['chat_history'] = []
         session_state['tools_called'] = []
         session_state['completed'] = False
+        print(
+            f"[{client_ip}] Session started (session: {session_id}, pid: {pid}, "
+            f"start_time: {session_state['start_time']})"
+        )
     
     # Also update global state for backward compatibility
     with state_lock:
@@ -504,6 +510,11 @@ def run_agent():
         finally:
             with sessions_lock:
                 session_state['running'] = False
+                print(
+                    f"[{client_ip}] Session run ended (session: {session_id}, pid: {pid}, "
+                    f"completed: {session_state.get('completed')}, "
+                    f"log_count: {len(session_state.get('logs', []))})"
+                )
             with state_lock:
                 agent_state['running'] = False
     
@@ -532,10 +543,11 @@ def reconnect_session():
         missed_events = session_state['logs'][last_event_index + 1:]
 
     client_ip = get_client_ip()
+    pid = os.getpid()
     print(
         f"[{client_ip}] Reconnect requested (session: {session_id}, "
         f"last_event_index: {last_event_index}, "
-        f"running: {is_running}, completed: {is_completed}, log_count: {log_count})"
+        f"running: {is_running}, completed: {is_completed}, log_count: {log_count}, pid: {pid})"
     )
         
     def generate():
@@ -583,11 +595,22 @@ def get_session_status():
     if not session_id:
         return jsonify({'error': 'No session_id provided'}), 400
     
+    client_ip = get_client_ip()
+    pid = os.getpid()
+
     with sessions_lock:
         if session_id not in sessions:
+            print(f"[{client_ip}] Session status: not found (session: {session_id}, pid: {pid})")
             return jsonify({'exists': False}), 200
         
         session_state = sessions[session_id]
+        print(
+            f"[{client_ip}] Session status (session: {session_id}, pid: {pid}, "
+            f"running: {session_state.get('running')}, completed: {session_state.get('completed')}, "
+            f"log_count: {len(session_state.get('logs', []))}, "
+            f"start_time: {session_state.get('start_time')}, "
+            f"elapsed_time: {session_state.get('elapsed_time')})"
+        )
         return jsonify({
             'exists': True,
             'running': session_state['running'],

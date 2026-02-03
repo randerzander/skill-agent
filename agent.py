@@ -674,6 +674,10 @@ class AgentSkillsFramework:
         system_message = config.get('system_message', """You are a helpful AI assistant with access to various skills.
 
 Activate available skills to complete tasks. After each skill, consider whether you need to activate another skill to complete the user's request.""")
+        system_message = (
+            f"{system_message}\n\nCurrent timestamp: "
+            f"{datetime.now().isoformat(sep=' ', timespec='seconds')}"
+        )
         
         self.messages = [{"role": "system", "content": system_message}]
         
@@ -1376,7 +1380,11 @@ Activate available skills to complete tasks. After each skill, consider whether 
                                         "task_number": int(next_task_num)
                                     })
                                     
-                                    response_msg = f"Task {task_number} marked as complete. Task {next_task_num} is now active: {next_task_desc}"
+                                    response_msg = (
+                                        f"Task {task_number} marked as complete. "
+                                        f"Task {next_task_num} is now active: {next_task_desc}. "
+                                        "Before starting, consider whether this next task is already complete based on existing results."
+                                    )
                                 else:
                                     # No more tasks - clear CURRENT_TASK and auto-activate answer
                                     current_task_data = {

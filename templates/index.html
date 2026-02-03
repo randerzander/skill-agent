@@ -512,54 +512,6 @@
         .log-entry.skill { background: rgba(255, 140, 0, 0.15); border-left: 3px solid #ff8c00; }
         .log-entry.complete { background: rgba(102, 187, 106, 0.15); border-left: 3px solid #66bb6a; }
         
-        .tools-list {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            max-height: 400px;
-            overflow-y: auto;
-        }
-        
-        .tool-item {
-            padding: 10px;
-            background: rgba(30, 33, 57, 0.6);
-            border-radius: 6px;
-            border-left: 3px solid #ff6b00;
-            box-shadow: 0 2px 8px rgba(255, 107, 0, 0.1);
-            overflow-wrap: break-word;
-            word-wrap: break-word;
-            transition: all 0.3s ease;
-        }
-        
-        .tool-item.active {
-            background: rgba(255, 140, 0, 0.15);
-            border-left-color: #00ff88;
-            box-shadow: 0 2px 12px rgba(0, 255, 136, 0.3);
-        }
-        
-        .tool-name {
-            font-weight: 600;
-            color: #ff8c00;
-            margin-bottom: 4px;
-        }
-        
-        .tool-item.active .tool-name {
-            color: #00ff88;
-        }
-        
-        .tool-args {
-            font-size: 11px;
-            color: #8a8f9f;
-            font-family: 'Courier New', monospace;
-            background: rgba(10, 14, 39, 0.5);
-            padding: 4px 8px;
-            border-radius: 4px;
-            margin-top: 4px;
-            white-space: pre-wrap;
-            word-break: break-all;
-            border: 1px solid rgba(255, 140, 0, 0.2);
-        }
-        
         .tasks-list {
             display: flex;
             flex-direction: column;
@@ -1288,9 +1240,6 @@
                     
                 case 'tool_call':
                     addLog('tool', `🛠️ Calling tool: ${event.data.tool_name}`, event.timestamp, elapsed, true, event.data.tool_name);
-                    const toolItem = addToolToList(event.data, event.timestamp);
-                    toolItem.classList.add('active');
-                    toolItem.dataset.toolName = event.data.tool_name;
                     registerToolStart(event.data.tool_name, totalElapsed);
                     break;
                     
@@ -1300,7 +1249,6 @@
                         // Fallback to removing last tool spinner
                         removeLastSpinner('tool');
                     }
-                    markLastToolInactive(event.data.tool_name);
                     const resultStr = JSON.stringify(event.data.result).substring(0, 100);
                     const resultIcon = event.data.error ? '✗' : '✓';
                     const resultType = event.data.error ? 'error' : 'tool';
@@ -1759,11 +1707,6 @@
             }
         }
         
-        function addToolToList(toolData, timestamp) {
-            // Tool calls are now shown in execution log only
-            // This function is kept for compatibility but doesn't add to sidebar
-            return document.createElement('div');
-        }
         
         function addTask(taskNumber, description, status = 'incomplete') {
             const tasksList = document.getElementById('tasksList');
@@ -1857,9 +1800,6 @@
             });
         }
         
-        function markLastToolInactive(toolName) {
-            // Tool calls no longer displayed in sidebar, this is a no-op
-        }
         
         function toggleOverlay() {
             const overlay = document.getElementById('chatOverlay');

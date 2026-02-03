@@ -10,7 +10,7 @@ Use this skill to break down complex, multi-part queries into sequential tasks. 
 Identify persons, places, and things mentioned in the user query.
 For each entity, ask yourself who or what is this thing? Create separate sub-task to use web to search for detailed information on it.
 
-Consider whether after gathering info (and data) from the web, additional tasks are needed to process or analyze that information. If so, create "coding" sub-tasks for those processing or analysis steps.
+Consider whether after gathering info (and data) from the web, additional tasks are needed to process, analyze, and visualize (graphs & charts) that information. If so, create "coding" sub-tasks for those processing or analysis steps.
 
 DO NOT COMPLETE TASKS WITHOUT USING TOOLS TO GATHER INFORMATION FIRST.
 

@@ -37,3 +37,4 @@ scratch/
 
 # Generated data files
 data/proxy_list.txt
+data/proxy_ip.txt

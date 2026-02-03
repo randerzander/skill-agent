@@ -399,63 +399,41 @@ def run_agent():
         agent_state['chat_history'] = []
         agent_state['tools_called'] = []
 
+    def apply_event_to_state(target_state, event):
+        target_state['elapsed_time'] = event['elapsed']
+        target_state['logs'].append(event)
+
+        if event['type'] == 'user_message':
+            target_state['chat_history'].append({
+                'role': 'user',
+                'content': event['data']['content'],
+                'timestamp': event['timestamp']
+            })
+        elif event['type'] == 'llm_response':
+            target_state['chat_history'].append({
+                'role': 'assistant',
+                'content': event['data']['content'],
+                'thinking': event['data'].get('thinking'),
+                'tool_calls': event['data'].get('tool_calls', []),
+                'timestamp': event['timestamp']
+            })
+        elif event['type'] == 'tool_call':
+            target_state['tools_called'].append(event['data'])
+        elif event['type'] == 'tool_result':
+            target_state['chat_history'].append({
+                'role': 'tool',
+                'content': json.dumps(event['data']['result']),
+                'tool_name': event['data']['tool_name'],
+                'timestamp': event['timestamp']
+            })
+
     def update_state_from_event(event):
         """Persist event to session state and global agent state"""
         with sessions_lock:
-            session_state['elapsed_time'] = event['elapsed']
-            session_state['logs'].append(event)
-
-            if event['type'] == 'user_message':
-                session_state['chat_history'].append({
-                    'role': 'user',
-                    'content': event['data']['content'],
-                    'timestamp': event['timestamp']
-                })
-            elif event['type'] == 'llm_response':
-                session_state['chat_history'].append({
-                    'role': 'assistant',
-                    'content': event['data']['content'],
-                    'thinking': event['data'].get('thinking'),
-                    'tool_calls': event['data'].get('tool_calls', []),
-                    'timestamp': event['timestamp']
-                })
-            elif event['type'] == 'tool_call':
-                session_state['tools_called'].append(event['data'])
-            elif event['type'] == 'tool_result':
-                session_state['chat_history'].append({
-                    'role': 'tool',
-                    'content': json.dumps(event['data']['result']),
-                    'tool_name': event['data']['tool_name'],
-                    'timestamp': event['timestamp']
-                })
+            apply_event_to_state(session_state, event)
 
         with state_lock:
-            agent_state['elapsed_time'] = event['elapsed']
-            agent_state['logs'].append(event)
-
-            if event['type'] == 'user_message':
-                agent_state['chat_history'].append({
-                    'role': 'user',
-                    'content': event['data']['content'],
-                    'timestamp': event['timestamp']
-                })
-            elif event['type'] == 'llm_response':
-                agent_state['chat_history'].append({
-                    'role': 'assistant',
-                    'content': event['data']['content'],
-                    'thinking': event['data'].get('thinking'),
-                    'tool_calls': event['data'].get('tool_calls', []),
-                    'timestamp': event['timestamp']
-                })
-            elif event['type'] == 'tool_call':
-                agent_state['tools_called'].append(event['data'])
-            elif event['type'] == 'tool_result':
-                agent_state['chat_history'].append({
-                    'role': 'tool',
-                    'content': json.dumps(event['data']['result']),
-                    'tool_name': event['data']['tool_name'],
-                    'timestamp': event['timestamp']
-                })
+            apply_event_to_state(agent_state, event)
     
     def generate():
         """Generate SSE events for the agent execution"""
@@ -638,13 +616,6 @@ def get_chat_history():
             'history': agent_state['chat_history'],
             'messages': messages_with_thinking
         })
-
-
-@app.route('/api/tools_called')
-def get_tools_called():
-    """Get the list of tools called"""
-    with state_lock:
-        return jsonify({'tools': agent_state['tools_called']})
 
 
 @app.route('/health')

@@ -49,6 +49,7 @@ def generate_code(task_description: str, context: str = "") -> str:
         base_url = config.get('coding', {}).get('base_url')
         api_key = os.getenv('OPENROUTER_API_KEY')
         
+        use_mistral = False
         if not base_url:
             # Auto-detect based on model name
             if coding_model.startswith('qwen3-') or coding_model.startswith('qwen-coder-'):
@@ -57,6 +58,11 @@ def generate_code(task_description: str, context: str = "") -> str:
                 # Use qwen_llm for OAuth-based models
                 from qwen_llm import qwen_chat
                 use_qwen_llm = True
+            elif coding_model.startswith('mistral-'):
+                # Mistral direct API
+                base_url = 'https://api.mistral.ai'
+                use_qwen_llm = False
+                use_mistral = True
             else:
                 # OpenRouter for all other models (including qwen/qwen3-coder:free)
                 base_url = 'https://openrouter.ai/api/v1'
@@ -64,6 +70,9 @@ def generate_code(task_description: str, context: str = "") -> str:
         else:
             # base_url was explicitly configured
             use_qwen_llm = 'portal.qwen.ai' in base_url
+            use_mistral = 'api.mistral.ai' in base_url
+            if use_mistral:
+                use_qwen_llm = False
         
         prompt = f"""Write Python code to {task_description}.
 
@@ -102,6 +111,28 @@ Output only the Python code, no explanations."""
                             base_url=base_url,
                             temperature=0.2
                         )
+                    elif use_mistral:
+                        api_key = os.getenv('MISTRAL_API_KEY')
+                        if not api_key:
+                            raise RuntimeError("MISTRAL_API_KEY not set for Mistral coding model.")
+                        from mistralai import Mistral, UserMessage
+                        import asyncio
+
+                        async def _call_mistral():
+                            client = Mistral(api_key=api_key, server_url=base_url)
+                            try:
+                                response = await client.chat.complete_async(
+                                    model=coding_model,
+                                    messages=[UserMessage(role="user", content=prompt)],
+                                    temperature=0.2
+                                )
+                            finally:
+                                await client.__aexit__(None, None, None)
+                            return response
+
+                        response = asyncio.run(_call_mistral())
+                        code = response.choices[0].message.content
+                        usage = None
                     else:
                         # Use OpenAI client for OpenRouter
                         client = OpenAI(

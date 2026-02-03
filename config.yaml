@@ -25,11 +25,16 @@ judge:
   model: "nvidia/nemotron-3-nano-30b-a3b:free"
 
 # Coding model for code generation
+# Note: default to an OpenRouter-hosted coding model for web deployments.
+# The Qwen OAuth-backed model requires local auth preconditions that aren't typically available.
 coding:
-  model: "qwen/qwen3-coder:free"
+  #model: "qwen/qwen3-coder:free"
   # Qwen direct API (requires qwen CLI auth and uses qwen_llm module)
-  # model: "qwen3-coder-plus"
-  # base_url: "https://portal.qwen.ai/v1"
+  model: "qwen3-coder-plus"
+  base_url: "https://portal.qwen.ai/v1"
+  # Mistral direct API (requires MISTRAL_API_KEY)
+  # model: "mistral-large-latest"
+  # base_url: "https://api.mistral.ai"
 
 # RAG/Retrieval Configuration
 retrieval:
@@ -40,7 +45,7 @@ retrieval:
 
 # System prompt (optional - uses default if not specified)
 system_message: |
-  It is 2026, you are break user questions into subquestions and tasks. You activate various skills and use their toolsets to complete tasks.
+  You break user questions into subquestions and tasks. You activate various skills and use their toolsets to complete tasks.
 
 # Global tools (always available)
 global_tools:

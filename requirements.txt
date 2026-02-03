@@ -16,3 +16,4 @@ pypdfium2>=4.0.0
 # lancedb>=0.5.0  # Commented out: slow to install, only needed if retrieval.enabled=true in config.yaml
 pysearx @ git+https://github.com/randerzander/pysearx.git
 flask>=3.0.0
+mistralai>=1.0.0

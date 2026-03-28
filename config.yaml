@@ -19,6 +19,7 @@ openai:
 
   #local llama cpp server
   #base_url: "http://192.168.1.90:8080/v1"
+  #model: "local-model-name"
 
 # Judge model for evaluations
 judge:

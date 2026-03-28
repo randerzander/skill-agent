@@ -659,6 +659,16 @@ class AgentSkillsFramework:
         
         # Model configuration from config
         self.model = openai_config.get('model', 'nvidia/nemotron-3-nano-30b-a3b:free')
+        # Query models endpoint to determine actual available model
+        try:
+            models_response = self.client.models.list()
+            model_ids = [m.id for m in getattr(models_response, "data", []) if getattr(m, "id", None)]
+            if model_ids:
+                if self.model not in model_ids:
+                    self.model = model_ids[0]
+                print(f"[LLM] Models available: {len(model_ids)}; using model: {self.model}")
+        except Exception as e:
+            print(f"[LLM] Warning: failed to fetch models list: {e}")
         
         # Initialize skill loader with enabled skills filter
         skills_config = config.get('skills', {})

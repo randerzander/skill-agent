@@ -373,7 +373,8 @@ def run_agent():
                 'tools_called': [],
                 'start_time': None,
                 'elapsed_time': 0,
-                'completed': False
+                'completed': False,
+                'completed_sent': False
             }
         session_state = sessions[session_id]
         
@@ -386,6 +387,7 @@ def run_agent():
         session_state['chat_history'] = []
         session_state['tools_called'] = []
         session_state['completed'] = False
+        session_state['completed_sent'] = False
         print(
             f"[{client_ip}] Session started (session: {session_id}, pid: {pid}, "
             f"start_time: {session_state['start_time']})"
@@ -491,8 +493,14 @@ def run_agent():
             if agent_error:
                 yield f"data: {json.dumps({'type': 'error', 'message': str(agent_error)})}\n\n"
             else:
-                # Send completion event
-                yield f"data: {json.dumps({'type': 'complete', 'response': agent_response})}\n\n"
+                # Send completion event once per session
+                should_send_complete = False
+                with sessions_lock:
+                    if not session_state.get('completed_sent'):
+                        session_state['completed_sent'] = True
+                        should_send_complete = True
+                if should_send_complete:
+                    yield f"data: {json.dumps({'type': 'complete', 'response': agent_response})}\n\n"
             
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
@@ -554,7 +562,14 @@ def reconnect_session():
 
             # If session is completed and no more events, send completion event and stop
             if now_completed and current_index + 1 >= len(logs):
-                yield f"data: {json.dumps({'type': 'complete', 'response': 'Session resumed'})}\n\n"
+                should_send_complete = False
+                with sessions_lock:
+                    current_state = sessions.get(session_id)
+                    if current_state and not current_state.get('completed_sent'):
+                        current_state['completed_sent'] = True
+                        should_send_complete = True
+                if should_send_complete:
+                    yield f"data: {json.dumps({'type': 'complete', 'response': 'Session resumed'})}\n\n"
                 break
 
             # If not running and not completed, stop streaming
